@@ -2,11 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/criptivo_theme.dart';
 
-/// Жив Glagolitic Seal — визуална проверка за E2EE.
-///
-/// - Пулсираща neon аура
-/// - Плавна смяна при нов глиф
-/// - Long-press → Safety Number
 class GlagoliticSealBadge extends StatefulWidget {
   final String glyph;
   final VoidCallback? onLongPress;
@@ -16,7 +11,7 @@ class GlagoliticSealBadge extends StatefulWidget {
     super.key,
     required this.glyph,
     this.onLongPress,
-    this.size = 28,
+    this.size = 32,
   });
 
   @override
@@ -24,66 +19,36 @@ class GlagoliticSealBadge extends StatefulWidget {
 }
 
 class _GlagoliticSealBadgeState extends State<GlagoliticSealBadge>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _pulseController;
-  late final AnimationController _swapController;
   late final Animation<double> _pulse;
-  late final Animation<double> _fade;
-
-  String _currentGlyph = '';
-  String _incomingGlyph = '';
-
-  static const _glyphStyle = TextStyle(
-    fontFamily: 'NotoSansGlagolitic',
-    color: CriptivoColors.neon,
-    fontWeight: FontWeight.w500,
-    height: 1,
-  );
 
   @override
   void initState() {
     super.initState();
-    _currentGlyph = widget.glyph;
-
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2200),
+      duration: const Duration(milliseconds: 2000),
     )..repeat(reverse: true);
 
-    _pulse = Tween<double>(begin: 0.35, end: 0.85).animate(
+    _pulse = Tween<double>(begin: 0.4, end: 0.9).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-
-    _swapController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
-    );
-
-    _fade = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _swapController, curve: Curves.easeOutCubic),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant GlagoliticSealBadge oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.glyph != widget.glyph && widget.glyph != _currentGlyph) {
-      _incomingGlyph = widget.glyph;
-      _swapController.forward(from: 0).then((_) {
-        if (!mounted) return;
-        setState(() {
-          _currentGlyph = _incomingGlyph;
-          _incomingGlyph = '';
-        });
-      });
-    }
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
-    _swapController.dispose();
     super.dispose();
+  }
+
+  /// Ако още няма глиф, показваме реална глаголица (не точка).
+  String get _displayGlyph {
+    final g = widget.glyph.trim();
+    if (g.isEmpty || g == '·' || g == '.' || g == '•') {
+      return 'Ⰰ'; // Azu — винаги видим fallback
+    }
+    return g;
   }
 
   @override
@@ -93,60 +58,49 @@ class _GlagoliticSealBadgeState extends State<GlagoliticSealBadge>
       child: GestureDetector(
         onLongPress: widget.onLongPress,
         child: AnimatedBuilder(
-          animation: Listenable.merge([_pulseController, _swapController]),
+          animation: _pulse,
           builder: (context, _) {
             final glow = _pulse.value;
 
             return Container(
-              width: widget.size + 16,
-              height: widget.size + 16,
+              width: widget.size + 20,
+              height: widget.size + 20,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
+                color: CriptivoColors.surfaceLight,
                 boxShadow: [
                   BoxShadow(
-                    color: CriptivoColors.neon.withValues(alpha: glow * 0.45),
-                    blurRadius: 14 + glow * 10,
-                    spreadRadius: glow * 2,
+                    color: CriptivoColors.neon.withValues(alpha: glow * 0.55),
+                    blurRadius: 16 + glow * 12,
+                    spreadRadius: 1 + glow * 2,
                   ),
                 ],
                 border: Border.all(
                   color: CriptivoColors.neon.withValues(
-                    alpha: 0.25 + glow * 0.35,
+                    alpha: 0.5 + glow * 0.4,
                   ),
-                  width: 1.2,
-                ),
-                gradient: RadialGradient(
-                  colors: [
-                    CriptivoColors.neon.withValues(alpha: 0.12),
-                    Colors.transparent,
-                  ],
+                  width: 1.5,
                 ),
               ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Старият глиф (избледнява)
-                  Opacity(
-                    opacity: 1.0 - _fade.value,
-                    child: Text(
-                      _currentGlyph,
-                      style: _glyphStyle.copyWith(fontSize: widget.size),
-                    ),
-                  ),
-                  // Новият глиф (появява се)
-                  if (_incomingGlyph.isNotEmpty)
-                    Opacity(
-                      opacity: _fade.value,
-                      child: Transform.scale(
-                        scale: 0.85 + (_fade.value * 0.15),
-                        child: Text(
-                          _incomingGlyph,
-                          style: _glyphStyle.copyWith(fontSize: widget.size),
-                        ),
-                      ),
-                    ),
-                ],
+              child: Text(
+                _displayGlyph,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  // Важно: и family, и fallback с интервал
+                  fontFamily: 'NotoSansGlagolitic',
+                  fontFamilyFallback: const [
+                    'Noto Sans Glagolitic',
+                    'Segoe UI Historic',
+                    'serif',
+                  ],
+                  fontSize: widget.size,
+                  height: 1.0,
+                  color: CriptivoColors.neon,
+                  fontWeight: FontWeight.w600,
+                  // Помага на някои браузъри
+                  fontFeatures: const [],
+                ),
               ),
             );
           },

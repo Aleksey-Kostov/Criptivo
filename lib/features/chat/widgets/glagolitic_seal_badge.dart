@@ -33,6 +33,13 @@ class _GlagoliticSealBadgeState extends State<GlagoliticSealBadge>
   String _currentGlyph = '';
   String _incomingGlyph = '';
 
+  static const _glyphStyle = TextStyle(
+    fontFamily: 'NotoSansGlagolitic',
+    color: CriptivoColors.neon,
+    fontWeight: FontWeight.w500,
+    height: 1,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -124,12 +131,7 @@ class _GlagoliticSealBadgeState extends State<GlagoliticSealBadge>
                     opacity: 1.0 - _fade.value,
                     child: Text(
                       _currentGlyph,
-                      style: TextStyle(
-                        fontSize: widget.size,
-                        color: CriptivoColors.neon,
-                        fontWeight: FontWeight.w500,
-                        height: 1,
-                      ),
+                      style: _glyphStyle.copyWith(fontSize: widget.size),
                     ),
                   ),
                   // Новият глиф (появява се)
@@ -140,12 +142,7 @@ class _GlagoliticSealBadgeState extends State<GlagoliticSealBadge>
                         scale: 0.85 + (_fade.value * 0.15),
                         child: Text(
                           _incomingGlyph,
-                          style: TextStyle(
-                            fontSize: widget.size,
-                            color: CriptivoColors.neon,
-                            fontWeight: FontWeight.w500,
-                            height: 1,
-                          ),
+                          style: _glyphStyle.copyWith(fontSize: widget.size),
                         ),
                       ),
                     ),

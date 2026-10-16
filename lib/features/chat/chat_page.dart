@@ -11,6 +11,7 @@ import '../../core/crypto/key_manager.dart';
 import '../../core/crypto/message_crypto.dart';
 import '../../core/crypto/safety_number.dart';
 import '../../core/theme/criptivo_theme.dart';
+import 'widgets/glagolitic_seal_badge.dart';
 
 class ChatPage extends StatefulWidget {
   final String conversationId;
@@ -191,7 +192,6 @@ class _ChatPageState extends State<ChatPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle bar
               Container(
                 width: 40,
                 height: 4,
@@ -201,7 +201,6 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ),
               const SizedBox(height: 20),
-
               const Text(
                 'Safety Number',
                 style: TextStyle(
@@ -219,7 +218,6 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ),
               const SizedBox(height: 20),
-
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -242,7 +240,6 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ),
               const SizedBox(height: 24),
-
               SelectableText(
                 formatted,
                 style: const TextStyle(
@@ -256,7 +253,6 @@ class _ChatPageState extends State<ChatPage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -497,31 +493,21 @@ class _ChatPageState extends State<ChatPage> {
         title: Row(
           children: [
             Expanded(child: Text(_otherName, overflow: TextOverflow.ellipsis)),
-            const SizedBox(width: 8),
-            // Glagolitic Seal — long-press отваря Safety Number
-            Tooltip(
-              message: 'Печат на връзката (E2EE)\nЗадръж за Safety Number',
-              child: GestureDetector(
-                onLongPress: _showSafetyNumber,
-                child: Text(
-                  _sealGlyph,
-                  style: const TextStyle(
-                    fontSize: 26,
-                    color: CriptivoColors.neon,
-                  ),
-                ),
-              ),
+            const SizedBox(width: 6),
+            // Жив Glagolitic Seal
+            GlagoliticSealBadge(
+              glyph: _sealGlyph,
+              onLongPress: _showSafetyNumber,
+              size: 24,
             ),
           ],
         ),
         actions: [
-          // Safety Number бутон
           IconButton(
             icon: const Icon(Icons.verified_user_outlined),
             tooltip: 'Safety Number',
             onPressed: _showSafetyNumber,
           ),
-          // Refresh
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Обнови',
@@ -535,7 +521,6 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Stack(
         children: [
-          // Background
           Positioned.fill(
             child: Image.asset(
               'assets/images/chat_background.png',
@@ -549,8 +534,6 @@ class _ChatPageState extends State<ChatPage> {
               color: CriptivoColors.background.withValues(alpha: 0.55),
             ),
           ),
-
-          // Content
           Column(
             children: [
               if (_error != null)
@@ -564,7 +547,6 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ],
                 ),
-
               Expanded(
                 child: _loading
                     ? const Center(
@@ -625,8 +607,6 @@ class _ChatPageState extends State<ChatPage> {
                         },
                       ),
               ),
-
-              // Input bar
               SafeArea(
                 child: Container(
                   padding: const EdgeInsets.all(8),

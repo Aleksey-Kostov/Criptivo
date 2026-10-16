@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
 import '../../core/crypto/glagolitic_seal.dart';
+import '../../core/crypto/key_manager.dart';
 import '../../core/crypto/message_crypto.dart';
+import '../../core/crypto/safety_number.dart';
 import '../../core/theme/criptivo_theme.dart';
 
 class ChatPage extends StatefulWidget {
@@ -89,7 +92,7 @@ class _ChatPageState extends State<ChatPage> {
             widget.otherUser['public_key'] as String?;
       });
     } catch (e) {
-      print('Failed to refresh public key: $e');
+      debugPrint('Failed to refresh public key: $e');
       setState(() {
         _theirPublicKey = widget.otherUser['public_key'] as String?;
       });
@@ -111,7 +114,7 @@ class _ChatPageState extends State<ChatPage> {
         _conversationCreatedAt = DateTime.now().toUtc();
       }
     } catch (e) {
-      print('Conversation meta error: $e');
+      debugPrint('Conversation meta error: $e');
       _conversationCreatedAt = DateTime.now().toUtc();
     }
   }
@@ -140,9 +143,151 @@ class _ChatPageState extends State<ChatPage> {
       final glyph = await seal.currentGlyph(conversationCreatedAt: created);
       if (mounted) setState(() => _sealGlyph = glyph);
     } catch (e) {
-      print('Seal error: $e');
+      debugPrint('Seal error: $e');
     }
   }
+
+  // ─────────────────────────────────────────────
+  // Safety Number
+  // ─────────────────────────────────────────────
+
+  Future<void> _showSafetyNumber() async {
+    final theirKey = _theirPublicKey;
+    if (theirKey == null || theirKey.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Липсва public key на събеседника')),
+      );
+      return;
+    }
+
+    final myPublicKey = await KeyManager.getPublicKeyBase64();
+    if (myPublicKey == null || myPublicKey.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Липсва твоят public key')));
+      return;
+    }
+
+    final number = await SafetyNumber.generate(
+      myPublicKeyBase64: myPublicKey,
+      theirPublicKeyBase64: theirKey,
+    );
+    final formatted = SafetyNumber.format(number);
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: CriptivoColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: CriptivoColors.neon.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              const Text(
+                'Safety Number',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: CriptivoColors.neon,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'с $_otherName',
+                style: const TextStyle(
+                  color: CriptivoColors.textSecondary,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: CriptivoColors.surfaceLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: CriptivoColors.neon.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: const Text(
+                  'Сравни този номер с този на другия човек '
+                  '(на живо, по телефона или лично).\n'
+                  'Ако съвпадат — връзката е защитена и няма man-in-the-middle атака.',
+                  style: TextStyle(
+                    color: CriptivoColors.textSecondary,
+                    fontSize: 13,
+                    height: 1.45,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              SelectableText(
+                formatted,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 17,
+                  letterSpacing: 1.1,
+                  height: 1.55,
+                  color: CriptivoColors.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: formatted));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Safety Number копиран'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 18),
+                  label: const Text('Копирай номера'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Затвори'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // Realtime + Polling
+  // ─────────────────────────────────────────────
 
   void _subscribeToMessages() {
     _channel?.unsubscribe();
@@ -157,8 +302,6 @@ class _ChatPageState extends State<ChatPage> {
             final row = Map<String, dynamic>.from(payload.newRecord);
             if (row.isEmpty) return;
             if (row['conversation_id'] != widget.conversationId) return;
-
-            print('Realtime INSERT: ${row['id']}');
 
             final id = row['id'];
             if (_messages.any((m) => m['id'] == id)) return;
@@ -184,7 +327,7 @@ class _ChatPageState extends State<ChatPage> {
               }
             } catch (e) {
               text = '[не може да се декриптира]';
-              print('Realtime decrypt error: $e');
+              debugPrint('Realtime decrypt error: $e');
             }
 
             if (!mounted) return;
@@ -195,7 +338,7 @@ class _ChatPageState extends State<ChatPage> {
           },
         )
         .subscribe((status, [err]) {
-          print('Realtime status: $status err: $err');
+          debugPrint('Realtime status: $status err: $err');
         });
   }
 
@@ -240,7 +383,7 @@ class _ChatPageState extends State<ChatPage> {
         _scrollToBottom();
       }
     } catch (e) {
-      print('Poll error: $e');
+      debugPrint('Poll error: $e');
     }
   }
 
@@ -272,7 +415,7 @@ class _ChatPageState extends State<ChatPage> {
           }
         } catch (e) {
           text = '[не може да се декриптира]';
-          print('Decrypt error: $e');
+          debugPrint('Decrypt error: $e');
         }
 
         decrypted.add({...row, 'text': text, 'is_me': isMe});
@@ -318,7 +461,7 @@ class _ChatPageState extends State<ChatPage> {
       await _loadMessages();
     } catch (e) {
       setState(() => _error = 'Грешка при изпращане: $e');
-      print(e);
+      debugPrint(e.toString());
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -355,21 +498,33 @@ class _ChatPageState extends State<ChatPage> {
           children: [
             Expanded(child: Text(_otherName, overflow: TextOverflow.ellipsis)),
             const SizedBox(width: 8),
+            // Glagolitic Seal — long-press отваря Safety Number
             Tooltip(
-              message: 'Печат на връзката (E2EE)',
-              child: Text(
-                _sealGlyph,
-                style: const TextStyle(
-                  fontSize: 26,
-                  color: CriptivoColors.neon,
+              message: 'Печат на връзката (E2EE)\nЗадръж за Safety Number',
+              child: GestureDetector(
+                onLongPress: _showSafetyNumber,
+                child: Text(
+                  _sealGlyph,
+                  style: const TextStyle(
+                    fontSize: 26,
+                    color: CriptivoColors.neon,
+                  ),
                 ),
               ),
             ),
           ],
         ),
         actions: [
+          // Safety Number бутон
+          IconButton(
+            icon: const Icon(Icons.verified_user_outlined),
+            tooltip: 'Safety Number',
+            onPressed: _showSafetyNumber,
+          ),
+          // Refresh
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: 'Обнови',
             onPressed: () async {
               await _refreshTheirPublicKey();
               await _updateSeal();
@@ -380,6 +535,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Stack(
         children: [
+          // Background
           Positioned.fill(
             child: Image.asset(
               'assets/images/chat_background.png',
@@ -390,9 +546,11 @@ class _ChatPageState extends State<ChatPage> {
           ),
           Positioned.fill(
             child: Container(
-              color: CriptivoColors.background.withOpacity(0.55),
+              color: CriptivoColors.background.withValues(alpha: 0.55),
             ),
           ),
+
+          // Content
           Column(
             children: [
               if (_error != null)
@@ -406,6 +564,7 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ],
                 ),
+
               Expanded(
                 child: _loading
                     ? const Center(
@@ -449,8 +608,10 @@ class _ChatPageState extends State<ChatPage> {
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
                                   color: isMe
-                                      ? CriptivoColors.neon.withOpacity(0.35)
-                                      : Colors.white.withOpacity(0.06),
+                                      ? CriptivoColors.neon.withValues(
+                                          alpha: 0.35,
+                                        )
+                                      : Colors.white.withValues(alpha: 0.06),
                                 ),
                               ),
                               child: Text(
@@ -464,10 +625,12 @@ class _ChatPageState extends State<ChatPage> {
                         },
                       ),
               ),
+
+              // Input bar
               SafeArea(
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  color: CriptivoColors.surface.withOpacity(0.92),
+                  color: CriptivoColors.surface.withValues(alpha: 0.92),
                   child: Row(
                     children: [
                       Expanded(
@@ -482,6 +645,7 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                           minLines: 1,
                           maxLines: 4,
+                          textInputAction: TextInputAction.send,
                           onSubmitted: (_) => _send(),
                         ),
                       ),
@@ -498,7 +662,7 @@ class _ChatPageState extends State<ChatPage> {
                                   color: CriptivoColors.neon,
                                 ),
                               )
-                            : const Icon(Icons.send),
+                            : const Icon(Icons.send_rounded),
                       ),
                     ],
                   ),

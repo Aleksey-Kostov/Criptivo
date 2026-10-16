@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../crypto/key_manager.dart';
 
 class AuthService {
@@ -11,14 +12,22 @@ class AuthService {
     required String username,
     String? displayName,
   }) async {
-    // 1. Генерираме ключове ако няма
+    // При регистрация създаваме ключове само ако липсват.
+    // Никога не заменяме вече съществуваща локална идентичност.
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
 
     final publicKey = await KeyManager.getPublicKeyBase64();
 
-    // 2. Регистрация в Supabase
+    if (publicKey == null || publicKey.isEmpty) {
+      throw StateError(
+        'Криптографските ключове не са налични. '
+        'Регистрацията не може да продължи безопасно.',
+      );
+    }
+
+    // Регистрация в Supabase.
     final response = await _supabase.auth.signUp(
       email: email,
       password: password,
@@ -28,44 +37,35 @@ class AuthService {
       },
     );
 
-    // 3. Качваме публичния ключ в profiles
-    if (response.user != null && publicKey != null) {
+    // Публикуваме публичния ключ само за новата регистрация.
+    // Ако Supabase не върне потребител, не правим промени в профила.
+    final user = response.user;
+
+    if (user != null) {
       await _supabase.from('profiles').update({
         'public_key': publicKey,
         'username': username,
         'display_name': displayName ?? username,
-      }).eq('id', response.user!.id);
+      }).eq('id', user.id);
     }
 
     return response;
   }
 
   /// Вход
+  ///
+  /// ВАЖНО:
+  /// Входът не генерира нови криптографски ключове и не презаписва
+  /// публичния ключ в профила. Това предпазва съществуващата
+  /// криптографска идентичност и достъпа до старите съобщения.
   static Future<AuthResponse> signIn({
     required String email,
     required String password,
   }) async {
-    final response = await _supabase.auth.signInWithPassword(
+    return _supabase.auth.signInWithPassword(
       email: email,
       password: password,
     );
-
-    // Уверяваме се, че имаме ключове локално
-    if (!await KeyManager.hasKeys()) {
-      await KeyManager.generateAndStoreKeys();
-      // Забележка: при нов device ключовете ще са различни.
-      // По-късно ще добавим multi-device / recovery.
-    }
-
-    // Обновяваме публичния ключ ако е нужно
-    final publicKey = await KeyManager.getPublicKeyBase64();
-    if (response.user != null && publicKey != null) {
-      await _supabase.from('profiles').update({
-        'public_key': publicKey,
-      }).eq('id', response.user!.id);
-    }
-
-    return response;
   }
 
   /// Изход
@@ -76,7 +76,7 @@ class AuthService {
   /// Текущ потребител
   static User? get currentUser => _supabase.auth.currentUser;
 
-  /// Stream за auth промени
+  /// Stream за промени в състоянието на удостоверяването
   static Stream<AuthState> get authStateChanges =>
       _supabase.auth.onAuthStateChange;
 }

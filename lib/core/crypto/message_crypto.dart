@@ -19,6 +19,17 @@ class MessageCrypto {
     required List<int> myPrivateKeyBytes,
     required List<int> theirPublicKeyBytes,
   }) async {
+    if (myPrivateKeyBytes.length != 32) {
+      throw StateError(
+        'Private key трябва да е 32 байта (получени: ${myPrivateKeyBytes.length})',
+      );
+    }
+    if (theirPublicKeyBytes.length != 32) {
+      throw StateError(
+        'Public key трябва да е 32 байта (получени: ${theirPublicKeyBytes.length})',
+      );
+    }
+
     final myKeyPair = await _x25519.newKeyPairFromSeed(myPrivateKeyBytes);
     final theirPublic = SimplePublicKey(
       theirPublicKeyBytes,
@@ -47,11 +58,13 @@ class MessageCrypto {
       throw Exception('Липсва private key');
     }
 
+    final theirBytes = base64Decode(theirPublicKeyBase64);
+    if (theirBytes.length != 32) {
+      throw StateError('Невалиден public key (дължина ${theirBytes.length})');
+    }
+
     final myKeyPair = await _x25519.newKeyPairFromSeed(myPrivate);
-    final theirPublic = SimplePublicKey(
-      base64Decode(theirPublicKeyBase64),
-      type: KeyPairType.x25519,
-    );
+    final theirPublic = SimplePublicKey(theirBytes, type: KeyPairType.x25519);
 
     final shared = await _x25519.sharedSecretKey(
       keyPair: myKeyPair,
@@ -77,9 +90,17 @@ class MessageCrypto {
       throw Exception('Липсва private key');
     }
 
+    final theirBytes = base64Decode(theirPublicKeyBase64);
+    if (theirBytes.length != 32) {
+      throw StateError(
+        'Невалиден public key на получателя (дължина ${theirBytes.length}). '
+        'Увери се, че другият потребител е публикувал ключа си.',
+      );
+    }
+
     final aesKey = await _aesKeyFromPair(
       myPrivateKeyBytes: myPrivate,
-      theirPublicKeyBytes: base64Decode(theirPublicKeyBase64),
+      theirPublicKeyBytes: theirBytes,
     );
 
     final secretBox = await _aes.encrypt(
@@ -87,6 +108,7 @@ class MessageCrypto {
       secretKey: aesKey,
     );
 
+    // cipherText + 16-byte MAC
     final combined = <int>[...secretBox.cipherText, ...secretBox.mac.bytes];
 
     return EncryptedPayload(
@@ -102,29 +124,41 @@ class MessageCrypto {
   }) async {
     final myPrivate = await KeyManager.getPrivateKeyBytes();
     if (myPrivate == null) {
-      throw Exception('Липсва private key');
+      throw Exception('Липсва private key на това устройство');
+    }
+
+    final theirBytes = base64Decode(theirPublicKeyBase64);
+    if (theirBytes.length != 32) {
+      throw StateError('Невалиден public key (дължина ${theirBytes.length})');
     }
 
     final aesKey = await _aesKeyFromPair(
       myPrivateKeyBytes: myPrivate,
-      theirPublicKeyBytes: base64Decode(theirPublicKeyBase64),
+      theirPublicKeyBytes: theirBytes,
     );
 
     final combined = base64Decode(ciphertextBase64);
     final nonce = base64Decode(nonceBase64);
 
     if (combined.length < 17) {
-      throw Exception('Ciphertext твърде къс');
+      throw Exception('Ciphertext твърде къс (${combined.length} байта)');
     }
 
     final cipherText = combined.sublist(0, combined.length - 16);
     final macBytes = combined.sublist(combined.length - 16);
 
-    final clear = await _aes.decrypt(
-      SecretBox(cipherText, nonce: nonce, mac: Mac(macBytes)),
-      secretKey: aesKey,
-    );
-
-    return utf8.decode(clear);
+    try {
+      final clear = await _aes.decrypt(
+        SecretBox(cipherText, nonce: nonce, mac: Mac(macBytes)),
+        secretKey: aesKey,
+      );
+      return utf8.decode(clear);
+    } on SecretBoxAuthenticationError {
+      // Най-честата причина: грешен ключ (сменен private/public key)
+      throw Exception(
+        'Грешка при автентикация (MAC). '
+        'Най-вероятно ключовете са се сменили след изпращането на съобщението.',
+      );
+    }
   }
 }

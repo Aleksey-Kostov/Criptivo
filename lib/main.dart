@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/auth/auth_service.dart';
 import 'core/crypto/key_manager.dart';
 import 'core/supabase_config.dart';
 import 'core/theme/criptivo_theme.dart';
@@ -15,6 +18,7 @@ Future<void> main() async {
     anonKey: SupabaseConfig.anonKey,
   );
 
+  // Генерира ключове само ако липсват локално
   await KeyManager.ensureKeys();
 
   runApp(const CriptivoApp());
@@ -34,8 +38,15 @@ class CriptivoApp extends StatelessWidget {
   }
 }
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool _synced = false;
 
   @override
   Widget build(BuildContext context) {
@@ -45,8 +56,16 @@ class AuthGate extends StatelessWidget {
         final session = Supabase.instance.client.auth.currentSession;
 
         if (session != null) {
+          // Синхронизираме public key само веднъж след login
+          if (!_synced) {
+            _synced = true;
+            unawaited(AuthService.syncPublicKeyToProfile());
+          }
           return const HomePage();
         }
+
+        // При logout нулираме флага
+        _synced = false;
         return const LoginPage();
       },
     );

@@ -41,7 +41,7 @@ class _ChatPageState extends State<ChatPage> {
   Timer? _sealTimer;
   Timer? _pollTimer;
 
-  String _sealGlyph = '·';
+  String _sealGlyph = 'Ⰰ';
   DateTime? _conversationCreatedAt;
 
   String get _otherName =>
@@ -300,12 +300,17 @@ class _ChatPageState extends State<ChatPage> {
             if (row['conversation_id'] != widget.conversationId) return;
 
             final id = row['id'];
+            // Вече имаме това съобщение (optimistic или от предишен load)
             if (_messages.any((m) => m['id'] == id)) return;
 
             final myId = AuthService.currentUser?.id;
             final isMe = row['sender_id'] == myId;
-            String text;
 
+            // Ако е мое съобщение и има temp — realtime ще го пропусне,
+            // optimistic вече го показва.
+            if (isMe) return;
+
+            String text;
             try {
               if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
                 await _refreshTheirPublicKey();
@@ -436,11 +441,13 @@ class _ChatPageState extends State<ChatPage> {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
 
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
 
     try {
       await _refreshTheirPublicKey();
-      await _updateSeal();
 
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
@@ -448,15 +455,42 @@ class _ChatPageState extends State<ChatPage> {
         return;
       }
 
-      await ChatService.sendEncryptedMessage(
+      // 1) Optimistic — показваме веднага
+      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+      setState(() {
+        _messages.add({
+          'id': tempId,
+          'text': text,
+          'is_me': true,
+          'sender_id': AuthService.currentUser?.id,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        });
+      });
+      _controller.clear();
+      _scrollToBottom();
+
+      // 2) Изпращане към сървъра
+      final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: text,
         theirPublicKeyBase64: theirKey,
       );
-      _controller.clear();
-      await _loadMessages();
+
+      // 3) Заменяме temp с реалния id
+      if (!mounted) return;
+      setState(() {
+        final i = _messages.indexWhere((m) => m['id'] == tempId);
+        if (i != -1) {
+          _messages[i] = {...inserted, 'text': text, 'is_me': true};
+        }
+      });
     } catch (e) {
-      setState(() => _error = 'Грешка при изпращане: $e');
+      setState(() {
+        _messages.removeWhere(
+          (m) => m['id'] is String && (m['id'] as String).startsWith('temp_'),
+        );
+        _error = 'Грешка при изпращане: $e';
+      });
       debugPrint(e.toString());
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -494,7 +528,6 @@ class _ChatPageState extends State<ChatPage> {
           children: [
             Expanded(child: Text(_otherName, overflow: TextOverflow.ellipsis)),
             const SizedBox(width: 6),
-            // Жив Glagolitic Seal
             GlagoliticSealBadge(
               glyph: _sealGlyph,
               onLongPress: _showSafetyNumber,

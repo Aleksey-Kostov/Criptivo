@@ -95,8 +95,9 @@ class ChatService {
     return list;
   }
 
-  /// Изпраща криптирано съобщение
-  static Future<void> sendEncryptedMessage({
+  /// Изпраща криптирано съобщение.
+  /// Връща записания ред, за да може UI-то да го покаже веднага.
+  static Future<Map<String, dynamic>> sendEncryptedMessage({
     required String conversationId,
     required String plaintext,
     required String theirPublicKeyBase64,
@@ -109,20 +110,28 @@ class ChatService {
       theirPublicKeyBase64: theirPublicKeyBase64,
     );
 
-    await _supabase.from('messages').insert({
-      'conversation_id': conversationId,
-      'sender_id': myId,
-      'ciphertext': encrypted.ciphertext,
-      'nonce': encrypted.nonce,
-    });
+    final inserted = await _supabase
+        .from('messages')
+        .insert({
+          'conversation_id': conversationId,
+          'sender_id': myId,
+          'ciphertext': encrypted.ciphertext,
+          'nonce': encrypted.nonce,
+          'is_deleted': false,
+        })
+        .select('id, sender_id, ciphertext, nonce, created_at')
+        .single();
 
     await _supabase
         .from('conversations')
         .update({'last_message_at': DateTime.now().toUtc().toIso8601String()})
         .eq('id', conversationId);
+
+    return Map<String, dynamic>.from(inserted);
   }
 
-  /// Зарежда съобщенията (криптирани)
+  /// Зарежда съобщенията (криптирани).
+  /// Включва и редове с is_deleted = NULL (стари записи).
   static Future<List<Map<String, dynamic>>> getMessages(
     String conversationId,
   ) async {
@@ -130,7 +139,7 @@ class ChatService {
         .from('messages')
         .select('id, sender_id, ciphertext, nonce, created_at')
         .eq('conversation_id', conversationId)
-        .eq('is_deleted', false)
+        .or('is_deleted.eq.false,is_deleted.is.null')
         .order('created_at', ascending: true);
 
     return List<Map<String, dynamic>>.from(result);

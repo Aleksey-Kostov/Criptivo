@@ -6,6 +6,20 @@ import '../crypto/key_manager.dart';
 class AuthService {
   static final _supabase = Supabase.instance.client;
 
+  /// Проверява дали username е свободен (case-insensitive).
+  static Future<bool> isUsernameAvailable(String username) async {
+    final normalized = username.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+
+    final row = await _supabase
+        .from('profiles')
+        .select('id')
+        .ilike('username', normalized)
+        .maybeSingle();
+
+    return row == null;
+  }
+
   /// Регистрация
   static Future<AuthResponse> signUp({
     required String email,
@@ -13,8 +27,15 @@ class AuthService {
     required String username,
     String? displayName,
   }) async {
-    // При регистрация създаваме ключове само ако липсват.
-    // Никога не заменяме вече съществуваща локална идентичност.
+    final normalizedUsername = username.trim().toLowerCase();
+
+    // 1) Username свободен ли е?
+    final available = await isUsernameAvailable(normalizedUsername);
+    if (!available) {
+      throw StateError('Този username вече е зает');
+    }
+
+    // 2) Ключове — създаваме само ако липсват
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
@@ -28,25 +49,25 @@ class AuthService {
       );
     }
 
-    // Регистрация в Supabase.
+    // 3) Регистрация в Supabase Auth
     final response = await _supabase.auth.signUp(
       email: email,
       password: password,
-      data: {'username': username, 'display_name': displayName ?? username},
+      data: {
+        'username': normalizedUsername,
+        'display_name': displayName ?? normalizedUsername,
+      },
     );
 
-    // Публикуваме публичния ключ само за новата регистрация.
+    // 4) Публикуваме public key + username в профила
     final user = response.user;
 
     if (user != null) {
-      await _supabase
-          .from('profiles')
-          .update({
-            'public_key': publicKey,
-            'username': username,
-            'display_name': displayName ?? username,
-          })
-          .eq('id', user.id);
+      await _supabase.from('profiles').update({
+        'public_key': publicKey,
+        'username': normalizedUsername,
+        'display_name': displayName ?? normalizedUsername,
+      }).eq('id', user.id);
     }
 
     return response;
@@ -66,7 +87,6 @@ class AuthService {
       password: password,
     );
 
-    // След успешен login синхронизираме текущия локален public key
     if (response.session != null) {
       await syncPublicKeyToProfile();
     }
@@ -75,9 +95,6 @@ class AuthService {
   }
 
   /// Качва текущия локален public key в профила.
-  ///
-  /// Вика се след login и при старт на приложението (AuthGate),
-  /// за да няма mismatch между устройството и базата данни.
   static Future<void> syncPublicKeyToProfile() async {
     final user = currentUser;
     if (user == null) return;

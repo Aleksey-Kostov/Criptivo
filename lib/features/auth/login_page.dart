@@ -61,6 +61,11 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   String _friendlyError(Object e) {
+    // От AuthService (зает username, липсващи ключове и т.н.)
+    if (e is StateError) {
+      return e.message;
+    }
+
     if (e is AuthException) {
       final msg = e.message.toLowerCase();
       if (msg.contains('invalid login') ||
@@ -82,6 +87,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       return 'Грешка при удостоверяване. Опитай отново.';
     }
+
     final s = e.toString().toLowerCase();
     if (s.contains('network') || s.contains('socket')) {
       return 'Няма връзка с мрежата';

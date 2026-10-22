@@ -9,6 +9,7 @@ import '../../core/crypto/key_manager.dart';
 import '../../core/theme/criptivo_theme.dart';
 import '../chat/chat_page.dart';
 import '../chat/new_chat_page.dart';
+import '../profile/profile_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -60,7 +61,7 @@ class _HomePageState extends State<HomePage> {
           })
           .eq('id', user.id);
     } catch (e) {
-      print('Key sync failed: $e');
+      debugPrint('Key sync failed: $e');
     }
   }
 
@@ -125,9 +126,9 @@ class _HomePageState extends State<HomePage> {
     });
 
     final conv = _conversations.cast<Map<String, dynamic>?>().firstWhere(
-      (c) => c?['conversation_id'] == conversationId,
-      orElse: () => null,
-    );
+          (c) => c?['conversation_id'] == conversationId,
+          orElse: () => null,
+        );
 
     final other = conv?['other_user'] as Map<String, dynamic>?;
     final name = other?['display_name'] ?? other?['username'] ?? 'Някой';
@@ -173,7 +174,7 @@ class _HomePageState extends State<HomePage> {
         return Map<String, dynamic>.from(row);
       }
     } catch (e) {
-      print('Failed to refresh other user: $e');
+      debugPrint('Failed to refresh other user: $e');
     }
 
     return {...?other, 'id': id};
@@ -182,7 +183,6 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openChat(Map<String, dynamic> item) async {
     final conversationId = item['conversation_id'] as String;
 
-    // Веднага махаме SnackBar + badge
     _clearNotificationUi();
     setState(() {
       _unread.remove(conversationId);
@@ -230,9 +230,9 @@ class _HomePageState extends State<HomePage> {
           if (id == _activeConversationId) continue;
 
           final old = _conversations.cast<Map<String, dynamic>?>().firstWhere(
-            (c) => c?['conversation_id'] == id,
-            orElse: () => null,
-          );
+                (c) => c?['conversation_id'] == id,
+                orElse: () => null,
+              );
 
           final newAt = item['last_message_at'] as String?;
           final oldAt = old?['last_message_at'] as String?;
@@ -270,7 +270,7 @@ class _HomePageState extends State<HomePage> {
         if (!quiet) _loading = false;
       });
     } catch (e) {
-      print('Грешка при зареждане на разговори: $e');
+      debugPrint('Грешка при зареждане на разговори: $e');
       if (!mounted) return;
       if (!quiet) setState(() => _loading = false);
     }
@@ -283,6 +283,22 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  Widget _buildAvatar(Map<String, dynamic>? other, String name) {
+    final avatarUrl = other?['avatar_url'] as String?;
+    final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
+
+    return CircleAvatar(
+      backgroundColor: CriptivoColors.surfaceLight,
+      backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+      child: hasAvatar
+          ? null
+          : Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: const TextStyle(color: CriptivoColors.neon),
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -291,7 +307,18 @@ class _HomePageState extends State<HomePage> {
         title: const Text('Criptivo'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'Профил',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfilePage()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.logout),
+            tooltip: 'Изход',
             onPressed: () => AuthService.signOut(),
           ),
         ],
@@ -301,82 +328,80 @@ class _HomePageState extends State<HomePage> {
               child: CircularProgressIndicator(color: CriptivoColors.neon),
             )
           : _conversations.isEmpty
-          ? const Center(
-              child: Text(
-                'Няма разговори.\nНатисни + за да започнеш нов чат.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: CriptivoColors.textSecondary),
-              ),
-            )
-          : RefreshIndicator(
-              color: CriptivoColors.neon,
-              onRefresh: () => _loadConversations(),
-              child: ListView.builder(
-                itemCount: _conversations.length,
-                itemBuilder: (context, index) {
-                  final item = _conversations[index];
-                  final conversationId =
-                      item['conversation_id'] as String? ?? '';
-                  final other = item['other_user'] as Map<String, dynamic>?;
-                  final name =
-                      other?['display_name'] ?? other?['username'] ?? 'Unknown';
-                  final isUnread = _unread.contains(conversationId);
+              ? const Center(
+                  child: Text(
+                    'Няма разговори.\nНатисни + за да започнеш нов чат.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: CriptivoColors.textSecondary),
+                  ),
+                )
+              : RefreshIndicator(
+                  color: CriptivoColors.neon,
+                  onRefresh: () => _loadConversations(),
+                  child: ListView.builder(
+                    itemCount: _conversations.length,
+                    itemBuilder: (context, index) {
+                      final item = _conversations[index];
+                      final conversationId =
+                          item['conversation_id'] as String? ?? '';
+                      final other =
+                          item['other_user'] as Map<String, dynamic>?;
+                      final name = other?['display_name'] ??
+                          other?['username'] ??
+                          'Unknown';
+                      final isUnread = _unread.contains(conversationId);
 
-                  return ListTile(
-                    leading: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: CriptivoColors.surfaceLight,
-                          child: Text(
-                            name.isNotEmpty ? name[0].toUpperCase() : '?',
-                            style: const TextStyle(color: CriptivoColors.neon),
+                      return ListTile(
+                        leading: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            _buildAvatar(other, name),
+                            if (isUnread)
+                              Positioned(
+                                right: -2,
+                                top: -2,
+                                child: Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: const BoxDecoration(
+                                    color: CriptivoColors.neon,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        title: Text(
+                          name,
+                          style: TextStyle(
+                            color: CriptivoColors.textPrimary,
+                            fontWeight: isUnread
+                                ? FontWeight.bold
+                                : FontWeight.normal,
                           ),
                         ),
-                        if (isUnread)
-                          Positioned(
-                            right: -2,
-                            top: -2,
-                            child: Container(
-                              width: 12,
-                              height: 12,
-                              decoration: const BoxDecoration(
-                                color: CriptivoColors.neon,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
+                        subtitle: Text(
+                          isUnread
+                              ? 'Ново съобщение'
+                              : (other?['username'] ?? ''),
+                          style: TextStyle(
+                            color: isUnread
+                                ? CriptivoColors.neon
+                                : CriptivoColors.textSecondary,
                           ),
-                      ],
-                    ),
-                    title: Text(
-                      name,
-                      style: TextStyle(
-                        color: CriptivoColors.textPrimary,
-                        fontWeight: isUnread
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                    subtitle: Text(
-                      isUnread ? 'Ново съобщение' : (other?['username'] ?? ''),
-                      style: TextStyle(
-                        color: isUnread
-                            ? CriptivoColors.neon
-                            : CriptivoColors.textSecondary,
-                      ),
-                    ),
-                    trailing: isUnread
-                        ? const Icon(
-                            Icons.mark_email_unread,
-                            color: CriptivoColors.neon,
-                            size: 20,
-                          )
-                        : null,
-                    onTap: () => _openChat(item),
-                  );
-                },
-              ),
-            ),
+                        ),
+                        trailing: isUnread
+                            ? const Icon(
+                                Icons.mark_email_unread,
+                                color: CriptivoColors.neon,
+                                size: 20,
+                              )
+                            : null,
+                        onTap: () => _openChat(item),
+                      );
+                    },
+                  ),
+                ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           await Navigator.push(

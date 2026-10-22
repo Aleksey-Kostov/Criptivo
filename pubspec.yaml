@@ -24,6 +24,7 @@ dependencies:
   image_picker: ^1.1.2
   file_picker: ^8.1.4
   http: ^1.2.2
+  emoji_picker_flutter: ^4.3.0
 
 dev_dependencies:
   flutter_test:

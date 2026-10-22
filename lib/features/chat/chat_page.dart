@@ -66,6 +66,8 @@ class _ChatPageState extends State<ChatPage> {
       await _startSeal();
     }
     await _loadMessages();
+    // Маркираме чуждите съобщения като прочетени
+    await ChatService.markMessagesAsRead(widget.conversationId);
     _subscribeToMessages();
     _startPollFallback();
   }
@@ -88,8 +90,7 @@ class _ChatPageState extends State<ChatPage> {
           .maybeSingle();
 
       setState(() {
-        _theirPublicKey =
-            row?['public_key'] as String? ??
+        _theirPublicKey = row?['public_key'] as String? ??
             widget.otherUser['public_key'] as String?;
       });
     } catch (e) {
@@ -109,8 +110,8 @@ class _ChatPageState extends State<ChatPage> {
           .maybeSingle();
 
       if (row != null && row['created_at'] != null) {
-        _conversationCreatedAt = DateTime.parse(row['created_at'] as String)
-            .toUtc();
+        _conversationCreatedAt =
+            DateTime.parse(row['created_at'] as String).toUtc();
       } else {
         _conversationCreatedAt = DateTime.now().toUtc();
       }
@@ -148,6 +149,20 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  String _formatTime(dynamic createdAt) {
+    if (createdAt == null) return '';
+    try {
+      final dt = createdAt is DateTime
+          ? createdAt.toLocal()
+          : DateTime.parse(createdAt.toString()).toLocal();
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    } catch (_) {
+      return '';
+    }
+  }
+
   // ─────────────────────────────────────────────
   // Safety Number
   // ─────────────────────────────────────────────
@@ -165,9 +180,9 @@ class _ChatPageState extends State<ChatPage> {
     final myPublicKey = await KeyManager.getPublicKeyBase64();
     if (myPublicKey == null || myPublicKey.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Липсва твоят public key')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Липсва твоят public key')),
+      );
       return;
     }
 
@@ -300,14 +315,10 @@ class _ChatPageState extends State<ChatPage> {
             if (row['conversation_id'] != widget.conversationId) return;
 
             final id = row['id'];
-            // Вече имаме това съобщение (optimistic или от предишен load)
             if (_messages.any((m) => m['id'] == id)) return;
 
             final myId = AuthService.currentUser?.id;
             final isMe = row['sender_id'] == myId;
-
-            // Ако е мое съобщение и има temp — realtime ще го пропусне,
-            // optimistic вече го показва.
             if (isMe) return;
 
             String text;
@@ -336,6 +347,30 @@ class _ChatPageState extends State<ChatPage> {
               _messages.add({...row, 'text': text, 'is_me': isMe});
             });
             _scrollToBottom();
+
+            // Чатът е отворен → маркираме като прочетено
+            await ChatService.markMessagesAsRead(widget.conversationId);
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) {
+            final row = Map<String, dynamic>.from(payload.newRecord);
+            if (row['conversation_id'] != widget.conversationId) return;
+
+            final id = row['id'];
+            final readAt = row['read_at'];
+            if (id == null || readAt == null) return;
+
+            final i = _messages.indexWhere((m) => m['id'] == id);
+            if (i == -1) return;
+
+            if (!mounted) return;
+            setState(() {
+              _messages[i] = {..._messages[i], 'read_at': readAt};
+            });
           },
         )
         .subscribe((status, [err]) {
@@ -379,13 +414,27 @@ class _ChatPageState extends State<ChatPage> {
       }
 
       if (!mounted) return;
-      if (decrypted.length != _messages.length) {
+      // Обновяваме и при промяна на read_at (дължината може да е същата)
+      final changed = decrypted.length != _messages.length ||
+          !_sameReadState(decrypted);
+      if (changed) {
         setState(() => _messages = decrypted);
-        _scrollToBottom();
+        if (decrypted.length != _messages.length) {
+          _scrollToBottom();
+        }
       }
     } catch (e) {
       debugPrint('Poll error: $e');
     }
+  }
+
+  bool _sameReadState(List<Map<String, dynamic>> next) {
+    if (next.length != _messages.length) return false;
+    for (var i = 0; i < next.length; i++) {
+      if (next[i]['id'] != _messages[i]['id']) return false;
+      if (next[i]['read_at'] != _messages[i]['read_at']) return false;
+    }
+    return true;
   }
 
   Future<void> _loadMessages() async {
@@ -455,7 +504,6 @@ class _ChatPageState extends State<ChatPage> {
         return;
       }
 
-      // 1) Optimistic — показваме веднага
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
       setState(() {
         _messages.add({
@@ -464,24 +512,28 @@ class _ChatPageState extends State<ChatPage> {
           'is_me': true,
           'sender_id': AuthService.currentUser?.id,
           'created_at': DateTime.now().toUtc().toIso8601String(),
+          'read_at': null,
         });
       });
       _controller.clear();
       _scrollToBottom();
 
-      // 2) Изпращане към сървъра
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: text,
         theirPublicKeyBase64: theirKey,
       );
 
-      // 3) Заменяме temp с реалния id
       if (!mounted) return;
       setState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
         if (i != -1) {
-          _messages[i] = {...inserted, 'text': text, 'is_me': true};
+          _messages[i] = {
+            ...inserted,
+            'text': text,
+            'is_me': true,
+            'read_at': inserted['read_at'],
+          };
         }
       });
     } catch (e) {
@@ -519,6 +571,231 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: CriptivoColors.surfaceLight,
+              border: Border.all(
+                color: CriptivoColors.neon.withValues(alpha: 0.3),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: CriptivoColors.neon.withValues(alpha: 0.15),
+                  blurRadius: 24,
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.lock_outline_rounded,
+              size: 36,
+              color: CriptivoColors.neon,
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Защитен разговор',
+            style: TextStyle(
+              color: CriptivoColors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Съобщенията са end-to-end криптирани.\nНапиши първото.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: CriptivoColors.textSecondary.withValues(alpha: 0.85),
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(Map<String, dynamic> msg) {
+    final isMe = msg['is_me'] == true;
+    final time = _formatTime(msg['created_at']);
+    final text = msg['text'] ?? '';
+    final isRead = msg['read_at'] != null;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: 4,
+        bottom: 4,
+        left: isMe ? 48 : 8,
+        right: isMe ? 8 : 48,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: isMe
+                  ? LinearGradient(
+                      colors: [
+                        CriptivoColors.bubbleMe,
+                        CriptivoColors.bubbleMe.withValues(alpha: 0.85),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : null,
+              color: isMe ? null : CriptivoColors.bubbleOther,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isMe ? 18 : 4),
+                bottomRight: Radius.circular(isMe ? 4 : 18),
+              ),
+              border: Border.all(
+                color: isMe
+                    ? CriptivoColors.neon.withValues(alpha: 0.25)
+                    : Colors.white.withValues(alpha: 0.06),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: CriptivoColors.textPrimary,
+                fontSize: 15,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (time.isNotEmpty)
+                  Text(
+                    time,
+                    style: TextStyle(
+                      color:
+                          CriptivoColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 11,
+                    ),
+                  ),
+                if (isMe) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    isRead ? Icons.done_all_rounded : Icons.done_rounded,
+                    size: 14,
+                    color: isRead
+                        ? CriptivoColors.neon
+                        : CriptivoColors.textSecondary.withValues(alpha: 0.7),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: CriptivoColors.surface.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: CriptivoColors.neon.withValues(alpha: 0.2),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                style: const TextStyle(
+                  color: CriptivoColors.textPrimary,
+                  fontSize: 15,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Съобщение...',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  isDense: true,
+                ),
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _send(),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Material(
+              color: _sending
+                  ? CriptivoColors.surfaceLight
+                  : CriptivoColors.neon,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _sending ? null : _send,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: _sending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: CriptivoColors.neon,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.send_rounded,
+                            color: Colors.black,
+                            size: 20,
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -526,7 +803,9 @@ class _ChatPageState extends State<ChatPage> {
       appBar: AppBar(
         title: Row(
           children: [
-            Expanded(child: Text(_otherName, overflow: TextOverflow.ellipsis)),
+            Expanded(
+              child: Text(_otherName, overflow: TextOverflow.ellipsis),
+            ),
             const SizedBox(width: 6),
             GlagoliticSealBadge(
               glyph: _sealGlyph,
@@ -548,6 +827,7 @@ class _ChatPageState extends State<ChatPage> {
               await _refreshTheirPublicKey();
               await _updateSeal();
               await _loadMessages();
+              await ChatService.markMessagesAsRead(widget.conversationId);
             },
           ),
         ],
@@ -588,99 +868,17 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       )
                     : _messages.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'Няма съобщения. Напиши първото.',
-                          style: TextStyle(color: CriptivoColors.textSecondary),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _messages[index];
-                          final isMe = msg['is_me'] == true;
-
-                          return Align(
-                            alignment: isMe
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              constraints: BoxConstraints(
-                                maxWidth:
-                                    MediaQuery.of(context).size.width * 0.75,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isMe
-                                    ? CriptivoColors.bubbleMe
-                                    : CriptivoColors.bubbleOther,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: isMe
-                                      ? CriptivoColors.neon.withValues(
-                                          alpha: 0.35,
-                                        )
-                                      : Colors.white.withValues(alpha: 0.06),
-                                ),
-                              ),
-                              child: Text(
-                                msg['text'] ?? '',
-                                style: const TextStyle(
-                                  color: CriptivoColors.textPrimary,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              SafeArea(
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  color: CriptivoColors.surface.withValues(alpha: 0.92),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          style: const TextStyle(
-                            color: CriptivoColors.textPrimary,
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+                            itemCount: _messages.length,
+                            itemBuilder: (context, index) {
+                              return _buildMessageBubble(_messages[index]);
+                            },
                           ),
-                          decoration: const InputDecoration(
-                            hintText: 'Съобщение...',
-                            isDense: true,
-                          ),
-                          minLines: 1,
-                          maxLines: 4,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _sending ? null : _send,
-                        color: CriptivoColors.neon,
-                        icon: _sending
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: CriptivoColors.neon,
-                                ),
-                              )
-                            : const Icon(Icons.send_rounded),
-                      ),
-                    ],
-                  ),
-                ),
               ),
+              _buildInputBar(),
             ],
           ),
         ],

@@ -119,7 +119,7 @@ class ChatService {
           'nonce': encrypted.nonce,
           'is_deleted': false,
         })
-        .select('id, sender_id, ciphertext, nonce, created_at')
+        .select('id, sender_id, ciphertext, nonce, created_at, read_at')
         .single();
 
     await _supabase
@@ -137,11 +137,30 @@ class ChatService {
   ) async {
     final result = await _supabase
         .from('messages')
-        .select('id, sender_id, ciphertext, nonce, created_at')
+        .select('id, sender_id, ciphertext, nonce, created_at, read_at')
         .eq('conversation_id', conversationId)
         .or('is_deleted.eq.false,is_deleted.is.null')
         .order('created_at', ascending: true);
 
     return List<Map<String, dynamic>>.from(result);
+  }
+
+  /// Маркира всички непрочетени съобщения от другия като прочетени.
+  static Future<void> markMessagesAsRead(String conversationId) async {
+    final myId = _myId;
+    if (myId == null) return;
+
+    try {
+      await _supabase
+          .from('messages')
+          .update({'read_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('conversation_id', conversationId)
+          .neq('sender_id', myId)
+          .filter('read_at', 'is', null);
+    } catch (e) {
+      // Не чупим UI-то ако колоната още липсва
+      // ignore: avoid_print
+      print('markMessagesAsRead error: $e');
+    }
   }
 }

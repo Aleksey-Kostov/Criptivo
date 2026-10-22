@@ -70,6 +70,31 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
   }
 
+  String _formatLastAt(dynamic lastMessageAt) {
+    if (lastMessageAt == null) return '';
+    try {
+      final dt = DateTime.parse(lastMessageAt.toString()).toLocal();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final day = DateTime(dt.year, dt.month, dt.day);
+      final diff = today.difference(day).inDays;
+
+      if (diff == 0) {
+        final h = dt.hour.toString().padLeft(2, '0');
+        final m = dt.minute.toString().padLeft(2, '0');
+        return '$h:$m';
+      }
+      if (diff == 1) return 'Вчера';
+      if (diff < 7) {
+        const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'нд'];
+        return days[dt.weekday - 1];
+      }
+      return '${dt.day}.${dt.month.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return '';
+    }
+  }
+
   void _subscribeToNewMessages() {
     final myId = AuthService.currentUser?.id;
     if (myId == null) return;
@@ -299,6 +324,52 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: CriptivoColors.surfaceLight,
+                border: Border.all(
+                  color: CriptivoColors.neon.withValues(alpha: 0.3),
+                ),
+              ),
+              child: const Icon(
+                Icons.lock_outline_rounded,
+                size: 40,
+                color: CriptivoColors.neon,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Няма разговори',
+              style: TextStyle(
+                color: CriptivoColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Натисни + за да започнеш\nзащитен чат.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: CriptivoColors.textSecondary.withValues(alpha: 0.9),
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -328,13 +399,7 @@ class _HomePageState extends State<HomePage> {
               child: CircularProgressIndicator(color: CriptivoColors.neon),
             )
           : _conversations.isEmpty
-              ? const Center(
-                  child: Text(
-                    'Няма разговори.\nНатисни + за да започнеш нов чат.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: CriptivoColors.textSecondary),
-                  ),
-                )
+              ? _buildEmptyState()
               : RefreshIndicator(
                   color: CriptivoColors.neon,
                   onRefresh: () => _loadConversations(),
@@ -350,6 +415,7 @@ class _HomePageState extends State<HomePage> {
                           other?['username'] ??
                           'Unknown';
                       final isUnread = _unread.contains(conversationId);
+                      final lastAt = _formatLastAt(item['last_message_at']);
 
                       return ListTile(
                         leading: Stack(
@@ -383,20 +449,48 @@ class _HomePageState extends State<HomePage> {
                         subtitle: Text(
                           isUnread
                               ? 'Ново съобщение'
-                              : (other?['username'] ?? ''),
+                              : '@${other?['username'] ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: isUnread
                                 ? CriptivoColors.neon
                                 : CriptivoColors.textSecondary,
+                            fontWeight: isUnread
+                                ? FontWeight.w500
+                                : FontWeight.normal,
                           ),
                         ),
-                        trailing: isUnread
-                            ? const Icon(
-                                Icons.mark_email_unread,
-                                color: CriptivoColors.neon,
-                                size: 20,
-                              )
-                            : null,
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (lastAt.isNotEmpty)
+                              Text(
+                                lastAt,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isUnread
+                                      ? CriptivoColors.neon
+                                      : CriptivoColors.textSecondary,
+                                  fontWeight: isUnread
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                            if (isUnread) ...[
+                              const SizedBox(height: 6),
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: const BoxDecoration(
+                                  color: CriptivoColors.neon,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                         onTap: () => _openChat(item),
                       );
                     },

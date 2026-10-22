@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,8 +9,10 @@ import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
 import '../../core/crypto/glagolitic_seal.dart';
 import '../../core/crypto/key_manager.dart';
+import '../../core/crypto/media_crypto.dart';
 import '../../core/crypto/message_crypto.dart';
 import '../../core/crypto/safety_number.dart';
+import '../../core/storage/media_service.dart';
 import '../../core/theme/criptivo_theme.dart';
 import 'widgets/glagolitic_seal_badge.dart';
 
@@ -34,6 +37,7 @@ class _ChatPageState extends State<ChatPage> {
   List<Map<String, dynamic>> _messages = [];
   bool _loading = true;
   bool _sending = false;
+  bool _uploadingMedia = false;
   String? _error;
   String? _theirPublicKey;
 
@@ -66,7 +70,6 @@ class _ChatPageState extends State<ChatPage> {
       await _startSeal();
     }
     await _loadMessages();
-    // Маркираме чуждите съобщения като прочетени
     await ChatService.markMessagesAsRead(widget.conversationId);
     _subscribeToMessages();
     _startPollFallback();
@@ -161,6 +164,32 @@ class _ChatPageState extends State<ChatPage> {
     } catch (_) {
       return '';
     }
+  }
+
+  String _displayFromPlaintext(String plaintext) {
+    final media = MediaCrypto.tryParseEnvelope(plaintext);
+    if (media == null) return plaintext;
+    final name = media['name'] as String? ?? '';
+    return switch (media['type']) {
+      'image' => '🖼️ ${name.isEmpty ? 'снимка' : name}',
+      'video' => '🎬 ${name.isEmpty ? 'видео' : name}',
+      'audio' => '🎵 ${name.isEmpty ? 'аудио' : name}',
+      _ => '📎 ${name.isEmpty ? 'файл' : name}',
+    };
+  }
+
+  Map<String, dynamic> _messageFromPlaintext(
+    Map<String, dynamic> row,
+    String plaintext,
+    bool isMe,
+  ) {
+    final media = MediaCrypto.tryParseEnvelope(plaintext);
+    return {
+      ...row,
+      'text': media != null ? _displayFromPlaintext(plaintext) : plaintext,
+      'is_me': isMe,
+      'media': media,
+    };
   }
 
   // ─────────────────────────────────────────────
@@ -321,7 +350,7 @@ class _ChatPageState extends State<ChatPage> {
             final isMe = row['sender_id'] == myId;
             if (isMe) return;
 
-            String text;
+            String plaintext;
             try {
               if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
                 await _refreshTheirPublicKey();
@@ -329,26 +358,25 @@ class _ChatPageState extends State<ChatPage> {
 
               final theirKey = _theirPublicKey;
               if (theirKey == null || theirKey.isEmpty) {
-                text = '[липсва ключ]';
+                plaintext = '[липсва ключ]';
               } else {
-                text = await MessageCrypto.decrypt(
+                plaintext = await MessageCrypto.decrypt(
                   ciphertextBase64: row['ciphertext'] as String,
                   nonceBase64: row['nonce'] as String,
                   theirPublicKeyBase64: theirKey,
                 );
               }
             } catch (e) {
-              text = '[не може да се декриптира]';
+              plaintext = '[не може да се декриптира]';
               debugPrint('Realtime decrypt error: $e');
             }
 
             if (!mounted) return;
             setState(() {
-              _messages.add({...row, 'text': text, 'is_me': isMe});
+              _messages.add(_messageFromPlaintext(row, plaintext, isMe));
             });
             _scrollToBottom();
 
-            // Чатът е отворен → маркираме като прочетено
             await ChatService.markMessagesAsRead(widget.conversationId);
           },
         )
@@ -381,7 +409,7 @@ class _ChatPageState extends State<ChatPage> {
   void _startPollFallback() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!_loading && !_sending) {
+      if (!_loading && !_sending && !_uploadingMedia) {
         _loadMessagesQuiet();
       }
     });
@@ -395,26 +423,25 @@ class _ChatPageState extends State<ChatPage> {
 
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
-        String text;
+        String plaintext;
         try {
           final theirKey = _theirPublicKey;
           if (theirKey == null || theirKey.isEmpty) {
-            text = '[липсва ключ]';
+            plaintext = '[липсва ключ]';
           } else {
-            text = await MessageCrypto.decrypt(
+            plaintext = await MessageCrypto.decrypt(
               ciphertextBase64: row['ciphertext'],
               nonceBase64: row['nonce'],
               theirPublicKeyBase64: theirKey,
             );
           }
         } catch (_) {
-          text = '[не може да се декриптира]';
+          plaintext = '[не може да се декриптира]';
         }
-        decrypted.add({...row, 'text': text, 'is_me': isMe});
+        decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
 
       if (!mounted) return;
-      // Обновяваме и при промяна на read_at (дължината може да е същата)
       final changed = decrypted.length != _messages.length ||
           !_sameReadState(decrypted);
       if (changed) {
@@ -450,25 +477,25 @@ class _ChatPageState extends State<ChatPage> {
 
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
-        String text;
+        String plaintext;
 
         try {
           final theirKey = _theirPublicKey;
           if (theirKey == null || theirKey.isEmpty) {
-            text = '[липсва ключ]';
+            plaintext = '[липсва ключ]';
           } else {
-            text = await MessageCrypto.decrypt(
+            plaintext = await MessageCrypto.decrypt(
               ciphertextBase64: row['ciphertext'],
               nonceBase64: row['nonce'],
               theirPublicKeyBase64: theirKey,
             );
           }
         } catch (e) {
-          text = '[не може да се декриптира]';
+          plaintext = '[не може да се декриптира]';
           debugPrint('Decrypt error: $e');
         }
 
-        decrypted.add({...row, 'text': text, 'is_me': isMe});
+        decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
 
       if (!mounted) return;
@@ -488,7 +515,7 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _sending) return;
+    if (text.isEmpty || _sending || _uploadingMedia) return;
 
     setState(() {
       _sending = true;
@@ -513,6 +540,7 @@ class _ChatPageState extends State<ChatPage> {
           'sender_id': AuthService.currentUser?.id,
           'created_at': DateTime.now().toUtc().toIso8601String(),
           'read_at': null,
+          'media': null,
         });
       });
       _controller.clear();
@@ -533,6 +561,7 @@ class _ChatPageState extends State<ChatPage> {
             'text': text,
             'is_me': true,
             'read_at': inserted['read_at'],
+            'media': null,
           };
         }
       });
@@ -547,6 +576,138 @@ class _ChatPageState extends State<ChatPage> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _sendMedia(Future<UploadedMedia?> Function() picker) async {
+    if (_sending || _uploadingMedia) return;
+
+    setState(() {
+      _uploadingMedia = true;
+      _error = null;
+    });
+
+    try {
+      await _refreshTheirPublicKey();
+      final theirKey = _theirPublicKey;
+      if (theirKey == null || theirKey.isEmpty) {
+        setState(() => _error = 'Другият потребител няма public key');
+        return;
+      }
+
+      final uploaded = await picker();
+      if (uploaded == null) return;
+
+      final media = MediaCrypto.tryParseEnvelope(uploaded.envelopeJson);
+      final preview = _displayFromPlaintext(uploaded.envelopeJson);
+      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+
+      setState(() {
+        _messages.add({
+          'id': tempId,
+          'text': preview,
+          'is_me': true,
+          'sender_id': AuthService.currentUser?.id,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          'read_at': null,
+          'media': media,
+        });
+      });
+      _scrollToBottom();
+
+      final inserted = await ChatService.sendEncryptedMessage(
+        conversationId: widget.conversationId,
+        plaintext: uploaded.envelopeJson,
+        theirPublicKeyBase64: theirKey,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        final i = _messages.indexWhere((m) => m['id'] == tempId);
+        if (i != -1) {
+          _messages[i] = {
+            ...inserted,
+            'text': preview,
+            'is_me': true,
+            'read_at': inserted['read_at'],
+            'media': media,
+          };
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _messages.removeWhere(
+          (m) => m['id'] is String && (m['id'] as String).startsWith('temp_'),
+        );
+        _error = 'Грешка при медия: $e';
+      });
+      debugPrint(e.toString());
+    } finally {
+      if (mounted) setState(() => _uploadingMedia = false);
+    }
+  }
+
+  void _showAttachSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: CriptivoColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_outlined,
+                  color: CriptivoColors.neon,
+                ),
+                title: const Text(
+                  'Снимка',
+                  style: TextStyle(color: CriptivoColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _sendMedia(MediaService.pickAndUploadImage);
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.videocam_outlined,
+                  color: CriptivoColors.neon,
+                ),
+                title: const Text(
+                  'Видео',
+                  style: TextStyle(color: CriptivoColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _sendMedia(MediaService.pickAndUploadVideo);
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.attach_file,
+                  color: CriptivoColors.neon,
+                ),
+                title: const Text(
+                  'Файл',
+                  style: TextStyle(color: CriptivoColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _sendMedia(MediaService.pickAndUploadFile);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _scrollToBottom() {
@@ -626,6 +787,7 @@ class _ChatPageState extends State<ChatPage> {
     final time = _formatTime(msg['created_at']);
     final text = msg['text'] ?? '';
     final isRead = msg['read_at'] != null;
+    final media = msg['media'] as Map<String, dynamic>?;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -639,7 +801,9 @@ class _ChatPageState extends State<ChatPage> {
             isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: media != null && media['type'] == 'image'
+                ? const EdgeInsets.all(6)
+                : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               gradient: isMe
                   ? LinearGradient(
@@ -671,14 +835,16 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ],
             ),
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: CriptivoColors.textPrimary,
-                fontSize: 15,
-                height: 1.35,
-              ),
-            ),
+            child: media != null && media['type'] == 'image'
+                ? _MediaImageThumb(media: media)
+                : Text(
+                    text,
+                    style: const TextStyle(
+                      color: CriptivoColors.textPrimary,
+                      fontSize: 15,
+                      height: 1.35,
+                    ),
+                  ),
           ),
           const SizedBox(height: 3),
           Padding(
@@ -714,6 +880,8 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildInputBar() {
+    final busy = _sending || _uploadingMedia;
+
     return SafeArea(
       child: Container(
         margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
@@ -734,9 +902,24 @@ class _ChatPageState extends State<ChatPage> {
         ),
         child: Row(
           children: [
+            IconButton(
+              onPressed: busy ? null : _showAttachSheet,
+              color: CriptivoColors.neon,
+              icon: _uploadingMedia
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: CriptivoColors.neon,
+                      ),
+                    )
+                  : const Icon(Icons.attach_file_rounded),
+            ),
             Expanded(
               child: TextField(
                 controller: _controller,
+                enabled: !busy,
                 style: const TextStyle(
                   color: CriptivoColors.textPrimary,
                   fontSize: 15,
@@ -748,7 +931,7 @@ class _ChatPageState extends State<ChatPage> {
                   focusedBorder: InputBorder.none,
                   filled: false,
                   contentPadding: EdgeInsets.symmetric(
-                    horizontal: 14,
+                    horizontal: 8,
                     vertical: 10,
                   ),
                   isDense: true,
@@ -761,13 +944,11 @@ class _ChatPageState extends State<ChatPage> {
             ),
             const SizedBox(width: 4),
             Material(
-              color: _sending
-                  ? CriptivoColors.surfaceLight
-                  : CriptivoColors.neon,
+              color: busy ? CriptivoColors.surfaceLight : CriptivoColors.neon,
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
-                onTap: _sending ? null : _send,
+                onTap: busy ? null : _send,
                 child: SizedBox(
                   width: 44,
                   height: 44,
@@ -882,6 +1063,83 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Download + decrypt image for bubble preview.
+class _MediaImageThumb extends StatefulWidget {
+  final Map<String, dynamic> media;
+
+  const _MediaImageThumb({required this.media});
+
+  @override
+  State<_MediaImageThumb> createState() => _MediaImageThumbState();
+}
+
+class _MediaImageThumbState extends State<_MediaImageThumb> {
+  Uint8List? _bytes;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final bytes = await MediaService.downloadAndDecrypt(
+        url: widget.media['url'] as String,
+        keyBase64: widget.media['key'] as String,
+        nonceBase64: widget.media['nonce'] as String,
+      );
+      if (!mounted) return;
+      setState(() {
+        _bytes = Uint8List.fromList(bytes);
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Media thumb error: $e');
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не може да се зареди';
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        width: 160,
+        height: 120,
+        child: Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: CriptivoColors.neon,
+          ),
+        ),
+      );
+    }
+    if (_error != null || _bytes == null) {
+      return Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          _error ?? '🖼️',
+          style: const TextStyle(color: CriptivoColors.textSecondary),
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.memory(
+        _bytes!,
+        width: 220,
+        fit: BoxFit.cover,
       ),
     );
   }

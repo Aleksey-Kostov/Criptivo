@@ -31,6 +31,9 @@ class _HomePageState extends State<HomePage> {
   RealtimeChannel? _messagesChannel;
   Timer? _pollTimer;
 
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
   @override
   void initState() {
     super.initState();
@@ -93,6 +96,18 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {
       return '';
     }
+  }
+
+  List<Map<String, dynamic>> get _filteredConversations {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return _conversations;
+
+    return _conversations.where((item) {
+      final other = item['other_user'] as Map<String, dynamic>?;
+      final name = (other?['display_name'] as String? ?? '').toLowerCase();
+      final username = (other?['username'] as String? ?? '').toLowerCase();
+      return name.contains(q) || username.contains(q);
+    }).toList();
   }
 
   void _subscribeToNewMessages() {
@@ -305,6 +320,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _pollTimer?.cancel();
     _messagesChannel?.unsubscribe();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -324,7 +340,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState({required bool isSearch}) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -340,16 +356,16 @@ class _HomePageState extends State<HomePage> {
                   color: CriptivoColors.neon.withValues(alpha: 0.3),
                 ),
               ),
-              child: const Icon(
-                Icons.lock_outline_rounded,
+              child: Icon(
+                isSearch ? Icons.search_off_rounded : Icons.lock_outline_rounded,
                 size: 40,
                 color: CriptivoColors.neon,
               ),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'Няма разговори',
-              style: TextStyle(
+            Text(
+              isSearch ? 'Няма резултати' : 'Няма разговори',
+              style: const TextStyle(
                 color: CriptivoColors.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
@@ -357,7 +373,9 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Натисни + за да започнеш\nзащитен чат.',
+              isSearch
+                  ? 'Опитай с друго име или username.'
+                  : 'Натисни + за да започнеш\nзащитен чат.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: CriptivoColors.textSecondary.withValues(alpha: 0.9),
@@ -370,8 +388,59 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: TextField(
+        controller: _searchController,
+        style: const TextStyle(color: CriptivoColors.textPrimary),
+        decoration: InputDecoration(
+          hintText: 'Търси разговор...',
+          prefixIcon: const Icon(Icons.search_rounded),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: CriptivoColors.surfaceLight,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(24),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(24),
+            borderSide: BorderSide(
+              color: CriptivoColors.neon.withValues(alpha: 0.15),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(24),
+            borderSide: BorderSide(
+              color: CriptivoColors.neon.withValues(alpha: 0.45),
+            ),
+          ),
+        ),
+        onChanged: (value) {
+          setState(() => _searchQuery = value);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filtered = _filteredConversations;
+    final isSearching = _searchQuery.trim().isNotEmpty;
+
     return Scaffold(
       backgroundColor: CriptivoColors.background,
       appBar: AppBar(
@@ -398,104 +467,118 @@ class _HomePageState extends State<HomePage> {
           ? const Center(
               child: CircularProgressIndicator(color: CriptivoColors.neon),
             )
-          : _conversations.isEmpty
-              ? _buildEmptyState()
-              : RefreshIndicator(
-                  color: CriptivoColors.neon,
-                  onRefresh: () => _loadConversations(),
-                  child: ListView.builder(
-                    itemCount: _conversations.length,
-                    itemBuilder: (context, index) {
-                      final item = _conversations[index];
-                      final conversationId =
-                          item['conversation_id'] as String? ?? '';
-                      final other =
-                          item['other_user'] as Map<String, dynamic>?;
-                      final name = other?['display_name'] ??
-                          other?['username'] ??
-                          'Unknown';
-                      final isUnread = _unread.contains(conversationId);
-                      final lastAt = _formatLastAt(item['last_message_at']);
+          : Column(
+              children: [
+                if (_conversations.isNotEmpty) _buildSearchBar(),
+                Expanded(
+                  child: _conversations.isEmpty
+                      ? _buildEmptyState(isSearch: false)
+                      : filtered.isEmpty
+                          ? _buildEmptyState(isSearch: true)
+                          : RefreshIndicator(
+                              color: CriptivoColors.neon,
+                              onRefresh: () => _loadConversations(),
+                              child: ListView.builder(
+                                itemCount: filtered.length,
+                                itemBuilder: (context, index) {
+                                  final item = filtered[index];
+                                  final conversationId =
+                                      item['conversation_id'] as String? ?? '';
+                                  final other = item['other_user']
+                                      as Map<String, dynamic>?;
+                                  final name = other?['display_name'] ??
+                                      other?['username'] ??
+                                      'Unknown';
+                                  final isUnread =
+                                      _unread.contains(conversationId);
+                                  final lastAt =
+                                      _formatLastAt(item['last_message_at']);
 
-                      return ListTile(
-                        leading: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            _buildAvatar(other, name),
-                            if (isUnread)
-                              Positioned(
-                                right: -2,
-                                top: -2,
-                                child: Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: const BoxDecoration(
-                                    color: CriptivoColors.neon,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
+                                  return ListTile(
+                                    leading: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        _buildAvatar(other, name),
+                                        if (isUnread)
+                                          Positioned(
+                                            right: -2,
+                                            top: -2,
+                                            child: Container(
+                                              width: 12,
+                                              height: 12,
+                                              decoration: const BoxDecoration(
+                                                color: CriptivoColors.neon,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    title: Text(
+                                      name,
+                                      style: TextStyle(
+                                        color: CriptivoColors.textPrimary,
+                                        fontWeight: isUnread
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      isUnread
+                                          ? 'Ново съобщение'
+                                          : '@${other?['username'] ?? ''}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: isUnread
+                                            ? CriptivoColors.neon
+                                            : CriptivoColors.textSecondary,
+                                        fontWeight: isUnread
+                                            ? FontWeight.w500
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                    trailing: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        if (lastAt.isNotEmpty)
+                                          Text(
+                                            lastAt,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: isUnread
+                                                  ? CriptivoColors.neon
+                                                  : CriptivoColors
+                                                      .textSecondary,
+                                              fontWeight: isUnread
+                                                  ? FontWeight.w600
+                                                  : FontWeight.normal,
+                                            ),
+                                          ),
+                                        if (isUnread) ...[
+                                          const SizedBox(height: 6),
+                                          Container(
+                                            width: 10,
+                                            height: 10,
+                                            decoration: const BoxDecoration(
+                                              color: CriptivoColors.neon,
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    onTap: () => _openChat(item),
+                                  );
+                                },
                               ),
-                          ],
-                        ),
-                        title: Text(
-                          name,
-                          style: TextStyle(
-                            color: CriptivoColors.textPrimary,
-                            fontWeight: isUnread
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
-                        ),
-                        subtitle: Text(
-                          isUnread
-                              ? 'Ново съобщение'
-                              : '@${other?['username'] ?? ''}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isUnread
-                                ? CriptivoColors.neon
-                                : CriptivoColors.textSecondary,
-                            fontWeight: isUnread
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                          ),
-                        ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            if (lastAt.isNotEmpty)
-                              Text(
-                                lastAt,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: isUnread
-                                      ? CriptivoColors.neon
-                                      : CriptivoColors.textSecondary,
-                                  fontWeight: isUnread
-                                      ? FontWeight.w600
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                            if (isUnread) ...[
-                              const SizedBox(height: 6),
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: const BoxDecoration(
-                                  color: CriptivoColors.neon,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        onTap: () => _openChat(item),
-                      );
-                    },
-                  ),
+                            ),
                 ),
+              ],
+            ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           await Navigator.push(

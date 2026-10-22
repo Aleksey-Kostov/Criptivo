@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../core/storage/avatar_service.dart';
 import '../../core/theme/criptivo_theme.dart';

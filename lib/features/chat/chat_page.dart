@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:characters/characters.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -33,11 +35,13 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _focusNode = FocusNode();
 
   List<Map<String, dynamic>> _messages = [];
   bool _loading = true;
   bool _sending = false;
   bool _uploadingMedia = false;
+  bool _showEmojiPicker = false;
   String? _error;
   String? _theirPublicKey;
 
@@ -60,7 +64,14 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
+    _focusNode.addListener(_onFocusChange);
     _initChat();
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus && _showEmojiPicker) {
+      setState(() => _showEmojiPicker = false);
+    }
   }
 
   Future<void> _initChat() async {
@@ -77,21 +88,18 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _refreshTheirPublicKey() async {
     final otherId = _otherUserId;
-
     if (otherId == null) {
       setState(() {
         _theirPublicKey = widget.otherUser['public_key'] as String?;
       });
       return;
     }
-
     try {
       final row = await Supabase.instance.client
           .from('profiles')
           .select('public_key')
           .eq('id', otherId)
           .maybeSingle();
-
       setState(() {
         _theirPublicKey = row?['public_key'] as String? ??
             widget.otherUser['public_key'] as String?;
@@ -111,7 +119,6 @@ class _ChatPageState extends State<ChatPage> {
           .select('created_at')
           .eq('id', widget.conversationId)
           .maybeSingle();
-
       if (row != null && row['created_at'] != null) {
         _conversationCreatedAt =
             DateTime.parse(row['created_at'] as String).toUtc();
@@ -136,7 +143,6 @@ class _ChatPageState extends State<ChatPage> {
     final theirKey = _theirPublicKey;
     final created = _conversationCreatedAt;
     if (theirKey == null || theirKey.isEmpty || created == null) return;
-
     try {
       final secret = await MessageCrypto.sessionSecretBytes(
         theirPublicKeyBase64: theirKey,
@@ -174,6 +180,7 @@ class _ChatPageState extends State<ChatPage> {
       'image' => '🖼️ ${name.isEmpty ? 'снимка' : name}',
       'video' => '🎬 ${name.isEmpty ? 'видео' : name}',
       'audio' => '🎵 ${name.isEmpty ? 'аудио' : name}',
+      'gif' => 'GIF',
       _ => '📎 ${name.isEmpty ? 'файл' : name}',
     };
   }
@@ -192,9 +199,41 @@ class _ChatPageState extends State<ChatPage> {
     };
   }
 
-  // ─────────────────────────────────────────────
-  // Safety Number
-  // ─────────────────────────────────────────────
+  // ── Emoji ────────────────────────────────────
+
+  void _toggleEmojiPicker() {
+    if (_showEmojiPicker) {
+      setState(() => _showEmojiPicker = false);
+      _focusNode.requestFocus();
+    } else {
+      _focusNode.unfocus();
+      setState(() => _showEmojiPicker = true);
+    }
+  }
+
+  void _onEmojiSelected(String emoji) {
+    final text = _controller.text;
+    final selection = _controller.selection;
+    final start = selection.start >= 0 ? selection.start : text.length;
+    final end = selection.end >= 0 ? selection.end : text.length;
+    final newText = text.replaceRange(start, end, emoji);
+    _controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+  }
+
+  void _onEmojiBackspace() {
+    final text = _controller.text;
+    if (text.isEmpty) return;
+    final newText = text.characters.skipLast(1).toString();
+    _controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newText.length),
+    );
+  }
+
+  // ── Safety Number ────────────────────────────
 
   Future<void> _showSafetyNumber() async {
     final theirKey = _theirPublicKey;
@@ -205,7 +244,6 @@ class _ChatPageState extends State<ChatPage> {
       );
       return;
     }
-
     final myPublicKey = await KeyManager.getPublicKeyBase64();
     if (myPublicKey == null || myPublicKey.isEmpty) {
       if (!mounted) return;
@@ -214,13 +252,11 @@ class _ChatPageState extends State<ChatPage> {
       );
       return;
     }
-
     final number = await SafetyNumber.generate(
       myPublicKeyBase64: myPublicKey,
       theirPublicKeyBase64: theirKey,
     );
     final formatted = SafetyNumber.format(number);
-
     if (!mounted) return;
 
     showModalBottomSheet(
@@ -325,13 +361,10 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // Realtime + Polling
-  // ─────────────────────────────────────────────
+  // ── Realtime + Polling ───────────────────────
 
   void _subscribeToMessages() {
     _channel?.unsubscribe();
-
     _channel = Supabase.instance.client
         .channel('messages:${widget.conversationId}')
         .onPostgresChanges(
@@ -342,10 +375,8 @@ class _ChatPageState extends State<ChatPage> {
             final row = Map<String, dynamic>.from(payload.newRecord);
             if (row.isEmpty) return;
             if (row['conversation_id'] != widget.conversationId) return;
-
             final id = row['id'];
             if (_messages.any((m) => m['id'] == id)) return;
-
             final myId = AuthService.currentUser?.id;
             final isMe = row['sender_id'] == myId;
             if (isMe) return;
@@ -355,7 +386,6 @@ class _ChatPageState extends State<ChatPage> {
               if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
                 await _refreshTheirPublicKey();
               }
-
               final theirKey = _theirPublicKey;
               if (theirKey == null || theirKey.isEmpty) {
                 plaintext = '[липсва ключ]';
@@ -376,7 +406,6 @@ class _ChatPageState extends State<ChatPage> {
               _messages.add(_messageFromPlaintext(row, plaintext, isMe));
             });
             _scrollToBottom();
-
             await ChatService.markMessagesAsRead(widget.conversationId);
           },
         )
@@ -387,14 +416,11 @@ class _ChatPageState extends State<ChatPage> {
           callback: (payload) {
             final row = Map<String, dynamic>.from(payload.newRecord);
             if (row['conversation_id'] != widget.conversationId) return;
-
             final id = row['id'];
             final readAt = row['read_at'];
             if (id == null || readAt == null) return;
-
             final i = _messages.indexWhere((m) => m['id'] == id);
             if (i == -1) return;
-
             if (!mounted) return;
             setState(() {
               _messages[i] = {..._messages[i], 'read_at': readAt};
@@ -420,7 +446,6 @@ class _ChatPageState extends State<ChatPage> {
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
-
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
         String plaintext;
@@ -440,7 +465,6 @@ class _ChatPageState extends State<ChatPage> {
         }
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
-
       if (!mounted) return;
       final changed = decrypted.length != _messages.length ||
           !_sameReadState(decrypted);
@@ -469,16 +493,13 @@ class _ChatPageState extends State<ChatPage> {
       _loading = true;
       _error = null;
     });
-
     try {
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
-
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
         String plaintext;
-
         try {
           final theirKey = _theirPublicKey;
           if (theirKey == null || theirKey.isEmpty) {
@@ -494,10 +515,8 @@ class _ChatPageState extends State<ChatPage> {
           plaintext = '[не може да се декриптира]';
           debugPrint('Decrypt error: $e');
         }
-
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
-
       if (!mounted) return;
       setState(() {
         _messages = decrypted;
@@ -516,21 +535,18 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending || _uploadingMedia) return;
-
     setState(() {
       _sending = true;
       _error = null;
+      _showEmojiPicker = false;
     });
-
     try {
       await _refreshTheirPublicKey();
-
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
         setState(() => _error = 'Другият потребител няма public key');
         return;
       }
-
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
       setState(() {
         _messages.add({
@@ -545,13 +561,11 @@ class _ChatPageState extends State<ChatPage> {
       });
       _controller.clear();
       _scrollToBottom();
-
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: text,
         theirPublicKeyBase64: theirKey,
       );
-
       if (!mounted) return;
       setState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
@@ -580,12 +594,11 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _sendMedia(Future<UploadedMedia?> Function() picker) async {
     if (_sending || _uploadingMedia) return;
-
     setState(() {
       _uploadingMedia = true;
       _error = null;
+      _showEmojiPicker = false;
     });
-
     try {
       await _refreshTheirPublicKey();
       final theirKey = _theirPublicKey;
@@ -593,14 +606,11 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _error = 'Другият потребител няма public key');
         return;
       }
-
       final uploaded = await picker();
       if (uploaded == null) return;
-
       final media = MediaCrypto.tryParseEnvelope(uploaded.envelopeJson);
       final preview = _displayFromPlaintext(uploaded.envelopeJson);
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
-
       setState(() {
         _messages.add({
           'id': tempId,
@@ -613,13 +623,11 @@ class _ChatPageState extends State<ChatPage> {
         });
       });
       _scrollToBottom();
-
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: uploaded.envelopeJson,
         theirPublicKeyBase64: theirKey,
       );
-
       if (!mounted) return;
       setState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
@@ -648,6 +656,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _showAttachSheet() {
+    setState(() => _showEmojiPicker = false);
     showModalBottomSheet(
       context: context,
       backgroundColor: CriptivoColors.surface,
@@ -724,6 +733,8 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
     _sealTimer?.cancel();
     _pollTimer?.cancel();
     _channel?.unsubscribe();
@@ -879,13 +890,60 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Widget _buildEmojiPanel() {
+    return SizedBox(
+      height: 280,
+      child: EmojiPicker(
+        onEmojiSelected: (category, emoji) {
+          _onEmojiSelected(emoji.emoji);
+        },
+        onBackspacePressed: _onEmojiBackspace,
+        config: Config(
+          height: 280,
+          checkPlatformCompatibility: true,
+          emojiViewConfig: EmojiViewConfig(
+            backgroundColor: CriptivoColors.surface,
+            columns: 8,
+            emojiSizeMax: 28,
+            recentsLimit: 28,
+            noRecents: const Text(
+              'Няма скорошни',
+              style: TextStyle(
+                color: CriptivoColors.textSecondary,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          categoryViewConfig: CategoryViewConfig(
+            backgroundColor: CriptivoColors.surface,
+            indicatorColor: CriptivoColors.neon,
+            iconColorSelected: CriptivoColors.neon,
+            iconColor: CriptivoColors.textSecondary,
+            dividerColor: CriptivoColors.surfaceLight,
+          ),
+          bottomActionBarConfig: BottomActionBarConfig(
+            backgroundColor: CriptivoColors.surface,
+            buttonColor: CriptivoColors.surfaceLight,
+            buttonIconColor: CriptivoColors.neon,
+          ),
+          searchViewConfig: SearchViewConfig(
+            backgroundColor: CriptivoColors.surface,
+            buttonIconColor: CriptivoColors.neon,
+            hintText: 'Търси emoji...',
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputBar() {
     final busy = _sending || _uploadingMedia;
 
     return SafeArea(
+      top: false,
       child: Container(
-        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        margin: EdgeInsets.fromLTRB(10, 0, 10, _showEmojiPicker ? 4 : 10),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
           color: CriptivoColors.surface.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(28),
@@ -916,9 +974,21 @@ class _ChatPageState extends State<ChatPage> {
                     )
                   : const Icon(Icons.attach_file_rounded),
             ),
+            IconButton(
+              onPressed: busy ? null : _toggleEmojiPicker,
+              color: _showEmojiPicker
+                  ? CriptivoColors.neon
+                  : CriptivoColors.textSecondary,
+              icon: Icon(
+                _showEmojiPicker
+                    ? Icons.keyboard_rounded
+                    : Icons.emoji_emotions_outlined,
+              ),
+            ),
             Expanded(
               child: TextField(
                 controller: _controller,
+                focusNode: _focusNode,
                 enabled: !busy,
                 style: const TextStyle(
                   color: CriptivoColors.textPrimary,
@@ -931,7 +1001,7 @@ class _ChatPageState extends State<ChatPage> {
                   focusedBorder: InputBorder.none,
                   filled: false,
                   contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: 4,
                     vertical: 10,
                   ),
                   isDense: true,
@@ -940,6 +1010,11 @@ class _ChatPageState extends State<ChatPage> {
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
+                onTap: () {
+                  if (_showEmojiPicker) {
+                    setState(() => _showEmojiPicker = false);
+                  }
+                },
               ),
             ),
             const SizedBox(width: 4),
@@ -1060,6 +1135,7 @@ class _ChatPageState extends State<ChatPage> {
                           ),
               ),
               _buildInputBar(),
+              if (_showEmojiPicker) _buildEmojiPanel(),
             ],
           ),
         ],
@@ -1068,7 +1144,6 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
-/// Download + decrypt image for bubble preview.
 class _MediaImageThumb extends StatefulWidget {
   final Map<String, dynamic> media;
 

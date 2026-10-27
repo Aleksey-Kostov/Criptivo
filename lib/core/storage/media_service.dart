@@ -1,7 +1,6 @@
-import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
@@ -27,13 +26,29 @@ class UploadedMedia {
   });
 }
 
+/// Локално избрана медия (без upload) — за attach preview.
+class PickedMediaLocal {
+  final List<int> bytes;
+  final String name;
+  final String mime;
+
+  const PickedMediaLocal({
+    required this.bytes,
+    required this.name,
+    required this.mime,
+  });
+}
+
 class MediaService {
   static final _imagePicker = ImagePicker();
 
   static const int maxBytes = 25 * 1024 * 1024; // 25 MB
+  static const int maxVoiceBytes = 5 * 1024 * 1024; // 5 MB глас
 
-  /// Снимка от галерията.
-  static Future<UploadedMedia?> pickAndUploadImage() async {
+  // ── Локален pick (preview, без Cloudinary) ──
+
+  /// Снимка от галерията — само байтове.
+  static Future<PickedMediaLocal?> pickImageLocal() async {
     final file = await _imagePicker.pickImage(
       source: ImageSource.gallery,
       maxWidth: 1280,
@@ -41,14 +56,74 @@ class MediaService {
       imageQuality: 85,
     );
     if (file == null) return null;
-    return _encryptAndUpload(
-      bytes: await file.readAsBytes(),
+
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) return null;
+    _assertSize(bytes.length);
+
+    return PickedMediaLocal(
+      bytes: bytes,
       name: file.name,
       mime: file.mimeType ?? _mimeFromName(file.name) ?? 'image/jpeg',
     );
   }
 
-  /// Снимка от камерата.
+  /// Видео от галерията — само байтове.
+  static Future<PickedMediaLocal?> pickVideoLocal() async {
+    final file = await _imagePicker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 3),
+    );
+    if (file == null) return null;
+
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) return null;
+    _assertSize(bytes.length);
+
+    return PickedMediaLocal(
+      bytes: bytes,
+      name: file.name,
+      mime: file.mimeType ?? _mimeFromName(file.name) ?? 'video/mp4',
+    );
+  }
+
+  /// Произволен файл — само байтове.
+  static Future<PickedMediaLocal?> pickFileLocal() async {
+    final result = await FilePicker.platform.pickFiles(
+      withData: true,
+      type: FileType.any,
+    );
+    if (result == null || result.files.isEmpty) return null;
+
+    final f = result.files.first;
+    final bytes = f.bytes;
+    if (bytes == null) {
+      throw Exception(
+        'Не могат да се прочетат байтовете на файла (web/mobile)',
+      );
+    }
+    if (bytes.isEmpty) return null;
+    _assertSize(bytes.length);
+
+    return PickedMediaLocal(
+      bytes: bytes,
+      name: f.name,
+      mime: _mimeFromName(f.name) ?? 'application/octet-stream',
+    );
+  }
+
+  // ── Pick + веднага upload (стар API) ──
+
+  static Future<UploadedMedia?> pickAndUploadImage() async {
+    final local = await pickImageLocal();
+    if (local == null) return null;
+    return uploadBytes(
+      bytes: local.bytes,
+      name: local.name,
+      mime: local.mime,
+    );
+  }
+
   static Future<UploadedMedia?> captureAndUploadImage() async {
     final file = await _imagePicker.pickImage(
       source: ImageSource.camera,
@@ -64,40 +139,81 @@ class MediaService {
     );
   }
 
-  /// Видео от галерията.
   static Future<UploadedMedia?> pickAndUploadVideo() async {
-    final file = await _imagePicker.pickVideo(
-      source: ImageSource.gallery,
-      maxDuration: const Duration(minutes: 3),
-    );
-    if (file == null) return null;
-    final bytes = await file.readAsBytes();
-    return _encryptAndUpload(
-      bytes: bytes,
-      name: file.name,
-      mime: file.mimeType ?? _mimeFromName(file.name) ?? 'video/mp4',
+    final local = await pickVideoLocal();
+    if (local == null) return null;
+    return uploadBytes(
+      bytes: local.bytes,
+      name: local.name,
+      mime: local.mime,
     );
   }
 
-  /// Произволен файл (PDF и т.н.).
   static Future<UploadedMedia?> pickAndUploadFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: true,
-      type: FileType.any,
+    final local = await pickFileLocal();
+    if (local == null) return null;
+    return uploadBytes(
+      bytes: local.bytes,
+      name: local.name,
+      mime: local.mime,
     );
-    if (result == null || result.files.isEmpty) return null;
+  }
 
-    final f = result.files.first;
-    final bytes = f.bytes;
-    if (bytes == null) {
-      throw Exception('Не могат да се прочетат байтовете на файла (web/mobile)');
+  /// Вече избрани байтове → encrypt → Cloudinary.
+  static Future<UploadedMedia> uploadBytes({
+    required List<int> bytes,
+    required String name,
+    required String mime,
+  }) {
+    return _encryptAndUpload(bytes: bytes, name: name, mime: mime);
+  }
+
+  /// Гласово от локален m4a запис.
+  static Future<UploadedMedia?> uploadVoiceFile({
+    required String filePath,
+    required int durationMs,
+  }) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw Exception('Гласовият файл липсва');
     }
 
-    return _encryptAndUpload(
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      throw Exception('Празно гласово съобщение');
+    }
+    if (bytes.length > maxVoiceBytes) {
+      throw Exception(
+        'Гласовото е твърде голямо '
+        '(${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB). '
+        'Максимум ${maxVoiceBytes ~/ (1024 * 1024)} MB.',
+      );
+    }
+
+    final sec = (durationMs / 1000).ceil().clamp(1, 9999);
+    final name = 'voice_${sec}s.m4a';
+
+    final uploaded = await _encryptAndUpload(
       bytes: bytes,
-      name: f.name,
-      mime: _mimeFromName(f.name) ?? 'application/octet-stream',
+      name: name,
+      mime: 'audio/mp4',
     );
+
+    try {
+      await file.delete();
+    } catch (_) {}
+
+    return uploaded;
+  }
+
+  static void _assertSize(int length) {
+    if (length > maxBytes) {
+      throw Exception(
+        'Файлът е твърде голям '
+        '(${(length / (1024 * 1024)).toStringAsFixed(1)} MB). '
+        'Максимум ${maxBytes ~/ (1024 * 1024)} MB.',
+      );
+    }
   }
 
   static Future<UploadedMedia> _encryptAndUpload({
@@ -108,13 +224,7 @@ class MediaService {
     if (bytes.isEmpty) {
       throw Exception('Празна медия');
     }
-    if (bytes.length > maxBytes) {
-      throw Exception(
-        'Файлът е твърде голям '
-        '(${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB). '
-        'Максимум ${maxBytes ~/ (1024 * 1024)} MB.',
-      );
-    }
+    _assertSize(bytes.length);
 
     final encrypted = await MediaCrypto.encryptBytes(bytes);
     final url = await _uploadCiphertextToCloudinary(
@@ -143,7 +253,6 @@ class MediaService {
     );
   }
 
-  /// Качва **криптирани** байтове (не оригиналния файл).
   static Future<String> _uploadCiphertextToCloudinary({
     required List<int> ciphertext,
     required String filename,
@@ -175,7 +284,6 @@ class MediaService {
     return match.group(1)!.replaceAll(r'\/', '/');
   }
 
-  /// Сваля ciphertext и го декриптира (за показване в чата).
   static Future<List<int>> downloadAndDecrypt({
     required String url,
     required String keyBase64,
@@ -204,6 +312,7 @@ class MediaService {
     if (lower.endsWith('.webm')) return 'video/webm';
     if (lower.endsWith('.mp3')) return 'audio/mpeg';
     if (lower.endsWith('.m4a')) return 'audio/mp4';
+    if (lower.endsWith('.aac')) return 'audio/aac';
     if (lower.endsWith('.wav')) return 'audio/wav';
     if (lower.endsWith('.pdf')) return 'application/pdf';
     if (lower.endsWith('.zip')) return 'application/zip';

@@ -60,7 +60,8 @@ class ChatService {
           created_at,
           last_message_at,
           participant_1,
-          participant_2
+          participant_2,
+          disappear_seconds
         ''')
         .or('participant_1.eq.$myId,participant_2.eq.$myId')
         .order('last_message_at', ascending: false);
@@ -75,6 +76,7 @@ class ChatService {
         'other_user_id': otherId,
         'last_message_at': row['last_message_at'],
         'created_at': row['created_at'],
+        'disappear_seconds': row['disappear_seconds'],
       });
     }
 
@@ -95,8 +97,28 @@ class ChatService {
     return list;
   }
 
+  /// null = изключено; иначе секунди (30, 300, 3600, ...)
+  static Future<void> setDisappearSeconds({
+    required String conversationId,
+    required int? seconds,
+  }) async {
+    await _supabase
+        .from('conversations')
+        .update({'disappear_seconds': seconds})
+        .eq('id', conversationId);
+  }
+
+  static Future<int?> getDisappearSeconds(String conversationId) async {
+    final row = await _supabase
+        .from('conversations')
+        .select('disappear_seconds')
+        .eq('id', conversationId)
+        .maybeSingle();
+    return row?['disappear_seconds'] as int?;
+  }
+
   /// Изпраща криптирано съобщение.
-  /// Връща записания ред, за да може UI-то да го покаже веднага.
+  /// Ако разговорът има disappear_seconds → пише expires_at.
   static Future<Map<String, dynamic>> sendEncryptedMessage({
     required String conversationId,
     required String plaintext,
@@ -110,6 +132,20 @@ class ChatService {
       theirPublicKeyBase64: theirPublicKeyBase64,
     );
 
+    int? disappearSeconds;
+    try {
+      disappearSeconds = await getDisappearSeconds(conversationId);
+    } catch (_) {
+      disappearSeconds = null;
+    }
+
+    final expiresAt = disappearSeconds != null
+        ? DateTime.now()
+            .toUtc()
+            .add(Duration(seconds: disappearSeconds))
+            .toIso8601String()
+        : null;
+
     final inserted = await _supabase
         .from('messages')
         .insert({
@@ -118,8 +154,11 @@ class ChatService {
           'ciphertext': encrypted.ciphertext,
           'nonce': encrypted.nonce,
           'is_deleted': false,
+          'expires_at': expiresAt,
         })
-        .select('id, sender_id, ciphertext, nonce, created_at, read_at')
+        .select(
+          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at',
+        )
         .single();
 
     await _supabase
@@ -130,19 +169,38 @@ class ChatService {
     return Map<String, dynamic>.from(inserted);
   }
 
-  /// Зарежда съобщенията (криптирани).
-  /// Включва и редове с is_deleted = NULL (стари записи).
+  /// Зарежда съобщенията (криптирани), без изтрити и без изтекли.
   static Future<List<Map<String, dynamic>>> getMessages(
     String conversationId,
   ) async {
     final result = await _supabase
         .from('messages')
-        .select('id, sender_id, ciphertext, nonce, created_at, read_at')
+        .select(
+          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at',
+        )
         .eq('conversation_id', conversationId)
         .or('is_deleted.eq.false,is_deleted.is.null')
         .order('created_at', ascending: true);
 
-    return List<Map<String, dynamic>>.from(result);
+    final now = DateTime.now().toUtc();
+    final list = <Map<String, dynamic>>[];
+
+    for (final row in result) {
+      final map = Map<String, dynamic>.from(row);
+      final exp = map['expires_at'];
+      if (exp != null) {
+        try {
+          final expires = DateTime.parse(exp.toString()).toUtc();
+          if (!expires.isAfter(now)) {
+            // Локално скриваме; по желание soft-delete в DB
+            continue;
+          }
+        } catch (_) {}
+      }
+      list.add(map);
+    }
+
+    return list;
   }
 
   /// Маркира всички непрочетени съобщения от другия като прочетени.
@@ -158,9 +216,23 @@ class ChatService {
           .neq('sender_id', myId)
           .filter('read_at', 'is', null);
     } catch (e) {
-      // Не чупим UI-то ако колоната още липсва
       // ignore: avoid_print
       print('markMessagesAsRead error: $e');
+    }
+  }
+
+  /// Soft-delete на изтекли съобщения в този разговор (по желание).
+  static Future<void> purgeExpiredMessages(String conversationId) async {
+    try {
+      await _supabase
+          .from('messages')
+          .update({'is_deleted': true, 'ciphertext': '', 'nonce': ''})
+          .eq('conversation_id', conversationId)
+          .lt('expires_at', DateTime.now().toUtc().toIso8601String())
+          .or('is_deleted.eq.false,is_deleted.is.null');
+    } catch (e) {
+      // ignore: avoid_print
+      print('purgeExpiredMessages error: $e');
     }
   }
 }

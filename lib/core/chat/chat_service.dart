@@ -141,9 +141,9 @@ class ChatService {
 
     final expiresAt = disappearSeconds != null
         ? DateTime.now()
-            .toUtc()
-            .add(Duration(seconds: disappearSeconds))
-            .toIso8601String()
+              .toUtc()
+              .add(Duration(seconds: disappearSeconds))
+              .toIso8601String()
         : null;
 
     final inserted = await _supabase
@@ -214,7 +214,7 @@ class ChatService {
           .update({'read_at': DateTime.now().toUtc().toIso8601String()})
           .eq('conversation_id', conversationId)
           .neq('sender_id', myId)
-          .filter('read_at', 'is', null);
+          .isFilter('read_at', null);
     } catch (e) {
       // ignore: avoid_print
       print('markMessagesAsRead error: $e');

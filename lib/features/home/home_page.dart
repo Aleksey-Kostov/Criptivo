@@ -24,11 +24,13 @@ class _HomePageState extends State<HomePage> {
 
   final Set<String> _unread = {};
   final Set<String> _notifiedMessageIds = {};
+  final Set<String> _notifiedReactionIds = {};
 
   /// Разговор, отворен в момента — без известия за него
   String? _activeConversationId;
 
   RealtimeChannel? _messagesChannel;
+  RealtimeChannel? _reactionsChannel;
   Timer? _pollTimer;
 
   final _searchController = TextEditingController();
@@ -44,6 +46,7 @@ class _HomePageState extends State<HomePage> {
     await _forceSyncKey();
     await _loadConversations();
     _subscribeToNewMessages();
+    _subscribeToReactions();
     _startPoll();
   }
 
@@ -145,6 +148,85 @@ class _HomePageState extends State<HomePage> {
             }
 
             _onIncomingMessage(conversationId);
+          },
+        )
+        .subscribe();
+  }
+
+  void _subscribeToReactions() {
+    final myId = AuthService.currentUser?.id;
+    if (myId == null) return;
+
+    _reactionsChannel?.unsubscribe();
+    _reactionsChannel = Supabase.instance.client
+        .channel('home-reactions-$myId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'message_reactions',
+          callback: (payload) async {
+            final row = Map<String, dynamic>.from(payload.newRecord);
+            final reactionId = row['id'] as String?;
+            final messageId = row['message_id'] as String?;
+            final fromUserId = row['user_id'] as String?;
+            final emoji = row['emoji'] as String? ?? '👍';
+
+            if (reactionId == null || messageId == null) return;
+            if (fromUserId == myId) return;
+            if (_notifiedReactionIds.contains(reactionId)) return;
+
+            try {
+              final msg = await Supabase.instance.client
+                  .from('messages')
+                  .select('id, sender_id, conversation_id')
+                  .eq('id', messageId)
+                  .maybeSingle();
+
+              if (msg == null) return;
+              if (msg['sender_id'] != myId) return;
+
+              final conversationId = msg['conversation_id'] as String?;
+              if (conversationId == null) return;
+              if (conversationId == _activeConversationId) return;
+
+              _notifiedReactionIds.add(reactionId);
+
+              final conv =
+                  _conversations.cast<Map<String, dynamic>?>().firstWhere(
+                        (c) => c?['conversation_id'] == conversationId,
+                        orElse: () => null,
+                      );
+
+              final other = conv?['other_user'] as Map<String, dynamic>?;
+              final name =
+                  other?['display_name'] ?? other?['username'] ?? 'Някой';
+
+              if (!mounted) return;
+
+              setState(() => _unread.add(conversationId));
+
+              _clearNotificationUi();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('$name реагира с $emoji'),
+                  backgroundColor: CriptivoColors.surfaceLight,
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 3),
+                  action: conv == null
+                      ? null
+                      : SnackBarAction(
+                          label: 'Отвори',
+                          textColor: CriptivoColors.neon,
+                          onPressed: () {
+                            _clearNotificationUi();
+                            _openChat(conv);
+                          },
+                        ),
+                ),
+              );
+            } catch (e) {
+              debugPrint('Reaction notify error: $e');
+            }
           },
         )
         .subscribe();
@@ -320,6 +402,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _pollTimer?.cancel();
     _messagesChannel?.unsubscribe();
+    _reactionsChannel?.unsubscribe();
     _searchController.dispose();
     super.dispose();
   }
@@ -439,7 +522,6 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filteredConversations;
-    final isSearching = _searchQuery.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: CriptivoColors.background,

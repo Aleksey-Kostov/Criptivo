@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:characters/characters.dart';
-import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
+import '../../core/chat/reaction_service.dart';
 import '../../core/crypto/glagolitic_seal.dart';
 import '../../core/crypto/key_manager.dart';
 import '../../core/crypto/media_crypto.dart';
@@ -16,7 +16,10 @@ import '../../core/crypto/message_crypto.dart';
 import '../../core/crypto/safety_number.dart';
 import '../../core/storage/media_service.dart';
 import '../../core/theme/criptivo_theme.dart';
+import 'widgets/chat_emoji_panel.dart';
 import 'widgets/glagolitic_seal_badge.dart';
+import 'widgets/reaction_bar.dart';
+import 'widgets/reaction_picker.dart';
 
 class ChatPage extends StatefulWidget {
   final String conversationId;
@@ -196,6 +199,8 @@ class _ChatPageState extends State<ChatPage> {
       'text': media != null ? _displayFromPlaintext(plaintext) : plaintext,
       'is_me': isMe,
       'media': media,
+      'reactions': <Map<String, dynamic>>[],
+      'reactions_raw': <Map<String, dynamic>>[],
     };
   }
 
@@ -231,6 +236,81 @@ class _ChatPageState extends State<ChatPage> {
       text: newText,
       selection: TextSelection.collapsed(offset: newText.length),
     );
+  }
+
+  // ── Reactions ────────────────────────────────
+
+  Future<void> _attachReactions(List<Map<String, dynamic>> list) async {
+    final ids = list
+        .map((m) => m['id'])
+        .whereType<String>()
+        .where((id) => !id.startsWith('temp_'))
+        .toList();
+    if (ids.isEmpty) return;
+
+    try {
+      final map = await ReactionService.getForMessages(ids);
+      for (final m in list) {
+        final id = m['id'] as String?;
+        if (id == null) continue;
+        final rows = map[id] ?? [];
+        m['reactions_raw'] = rows;
+        m['reactions'] = ReactionService.aggregate(rows);
+      }
+    } catch (e) {
+      debugPrint('Reactions load error: $e');
+    }
+  }
+
+  Future<void> _toggleReaction(String messageId, String emoji) async {
+    if (messageId.startsWith('temp_')) return;
+    try {
+      await ReactionService.toggle(messageId: messageId, emoji: emoji);
+      final map = await ReactionService.getForMessages([messageId]);
+      final rows = map[messageId] ?? [];
+      if (!mounted) return;
+      setState(() {
+        final i = _messages.indexWhere((m) => m['id'] == messageId);
+        if (i != -1) {
+          _messages[i] = {
+            ..._messages[i],
+            'reactions_raw': rows,
+            'reactions': ReactionService.aggregate(rows),
+          };
+        }
+      });
+    } catch (e) {
+      debugPrint('Reaction toggle error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Реакция: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _onBubbleLongPress(Map<String, dynamic> msg) async {
+    final id = msg['id'] as String?;
+    if (id == null || id.startsWith('temp_')) return;
+    final emoji = await showReactionPicker(context);
+    if (emoji == null) return;
+    await _toggleReaction(id, emoji);
+  }
+
+  Future<void> _refreshReactionsForMessage(String messageId) async {
+    final map = await ReactionService.getForMessages([messageId]);
+    final rows = map[messageId] ?? [];
+    if (!mounted) return;
+    setState(() {
+      final i = _messages.indexWhere((m) => m['id'] == messageId);
+      if (i != -1) {
+        _messages[i] = {
+          ..._messages[i],
+          'reactions_raw': rows,
+          'reactions': ReactionService.aggregate(rows),
+        };
+      }
+    });
   }
 
   // ── Safety Number ────────────────────────────
@@ -402,9 +482,8 @@ class _ChatPageState extends State<ChatPage> {
             }
 
             if (!mounted) return;
-            setState(() {
-              _messages.add(_messageFromPlaintext(row, plaintext, isMe));
-            });
+            final msg = _messageFromPlaintext(row, plaintext, isMe);
+            setState(() => _messages.add(msg));
             _scrollToBottom();
             await ChatService.markMessagesAsRead(widget.conversationId);
           },
@@ -425,6 +504,20 @@ class _ChatPageState extends State<ChatPage> {
             setState(() {
               _messages[i] = {..._messages[i], 'read_at': readAt};
             });
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'message_reactions',
+          callback: (payload) async {
+            final row = payload.newRecord.isNotEmpty
+                ? payload.newRecord
+                : payload.oldRecord;
+            final messageId = row['message_id'] as String?;
+            if (messageId == null) return;
+            if (!_messages.any((m) => m['id'] == messageId)) return;
+            await _refreshReactionsForMessage(messageId);
           },
         )
         .subscribe((status, [err]) {
@@ -465,6 +558,7 @@ class _ChatPageState extends State<ChatPage> {
         }
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
+      await _attachReactions(decrypted);
       if (!mounted) return;
       final changed = decrypted.length != _messages.length ||
           !_sameReadState(decrypted);
@@ -517,6 +611,7 @@ class _ChatPageState extends State<ChatPage> {
         }
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
+      await _attachReactions(decrypted);
       if (!mounted) return;
       setState(() {
         _messages = decrypted;
@@ -557,6 +652,7 @@ class _ChatPageState extends State<ChatPage> {
           'created_at': DateTime.now().toUtc().toIso8601String(),
           'read_at': null,
           'media': null,
+          'reactions': <Map<String, dynamic>>[],
         });
       });
       _controller.clear();
@@ -576,6 +672,7 @@ class _ChatPageState extends State<ChatPage> {
             'is_me': true,
             'read_at': inserted['read_at'],
             'media': null,
+            'reactions': <Map<String, dynamic>>[],
           };
         }
       });
@@ -620,6 +717,7 @@ class _ChatPageState extends State<ChatPage> {
           'created_at': DateTime.now().toUtc().toIso8601String(),
           'read_at': null,
           'media': media,
+          'reactions': <Map<String, dynamic>>[],
         });
       });
       _scrollToBottom();
@@ -638,6 +736,7 @@ class _ChatPageState extends State<ChatPage> {
             'is_me': true,
             'read_at': inserted['read_at'],
             'media': media,
+            'reactions': <Map<String, dynamic>>[],
           };
         }
       });
@@ -799,6 +898,9 @@ class _ChatPageState extends State<ChatPage> {
     final text = msg['text'] ?? '';
     final isRead = msg['read_at'] != null;
     final media = msg['media'] as Map<String, dynamic>?;
+    final reactions =
+        (msg['reactions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final messageId = msg['id'] as String? ?? '';
 
     return Padding(
       padding: EdgeInsets.only(
@@ -811,51 +913,58 @@ class _ChatPageState extends State<ChatPage> {
         crossAxisAlignment:
             isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: media != null && media['type'] == 'image'
-                ? const EdgeInsets.all(6)
-                : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              gradient: isMe
-                  ? LinearGradient(
-                      colors: [
-                        CriptivoColors.bubbleMe,
-                        CriptivoColors.bubbleMe.withValues(alpha: 0.85),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : null,
-              color: isMe ? null : CriptivoColors.bubbleOther,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(isMe ? 18 : 4),
-                bottomRight: Radius.circular(isMe ? 4 : 18),
-              ),
-              border: Border.all(
-                color: isMe
-                    ? CriptivoColors.neon.withValues(alpha: 0.25)
-                    : Colors.white.withValues(alpha: 0.06),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.25),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+          GestureDetector(
+            onLongPress: () => _onBubbleLongPress(msg),
+            child: Container(
+              padding: media != null && media['type'] == 'image'
+                  ? const EdgeInsets.all(6)
+                  : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: isMe
+                    ? LinearGradient(
+                        colors: [
+                          CriptivoColors.bubbleMe,
+                          CriptivoColors.bubbleMe.withValues(alpha: 0.85),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                    : null,
+                color: isMe ? null : CriptivoColors.bubbleOther,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(18),
+                  topRight: const Radius.circular(18),
+                  bottomLeft: Radius.circular(isMe ? 18 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 18),
                 ),
-              ],
-            ),
-            child: media != null && media['type'] == 'image'
-                ? _MediaImageThumb(media: media)
-                : Text(
-                    text,
-                    style: const TextStyle(
-                      color: CriptivoColors.textPrimary,
-                      fontSize: 15,
-                      height: 1.35,
-                    ),
+                border: Border.all(
+                  color: isMe
+                      ? CriptivoColors.neon.withValues(alpha: 0.25)
+                      : Colors.white.withValues(alpha: 0.06),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
                   ),
+                ],
+              ),
+              child: media != null && media['type'] == 'image'
+                  ? _MediaImageThumb(media: media)
+                  : Text(
+                      text,
+                      style: const TextStyle(
+                        color: CriptivoColors.textPrimary,
+                        fontSize: 15,
+                        height: 1.35,
+                      ),
+                    ),
+            ),
+          ),
+          ReactionBar(
+            aggregated: reactions,
+            onToggle: (emoji) => _toggleReaction(messageId, emoji),
           ),
           const SizedBox(height: 3),
           Padding(
@@ -867,8 +976,8 @@ class _ChatPageState extends State<ChatPage> {
                   Text(
                     time,
                     style: TextStyle(
-                      color:
-                          CriptivoColors.textSecondary.withValues(alpha: 0.7),
+                      color: CriptivoColors.textSecondary
+                          .withValues(alpha: 0.7),
                       fontSize: 11,
                     ),
                   ),
@@ -879,59 +988,14 @@ class _ChatPageState extends State<ChatPage> {
                     size: 14,
                     color: isRead
                         ? CriptivoColors.neon
-                        : CriptivoColors.textSecondary.withValues(alpha: 0.7),
+                        : CriptivoColors.textSecondary
+                            .withValues(alpha: 0.7),
                   ),
                 ],
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildEmojiPanel() {
-    return SizedBox(
-      height: 280,
-      child: EmojiPicker(
-        onEmojiSelected: (category, emoji) {
-          _onEmojiSelected(emoji.emoji);
-        },
-        onBackspacePressed: _onEmojiBackspace,
-        config: Config(
-          height: 280,
-          checkPlatformCompatibility: true,
-          emojiViewConfig: EmojiViewConfig(
-            backgroundColor: CriptivoColors.surface,
-            columns: 8,
-            emojiSizeMax: 28,
-            recentsLimit: 28,
-            noRecents: const Text(
-              'Няма скорошни',
-              style: TextStyle(
-                color: CriptivoColors.textSecondary,
-                fontSize: 14,
-              ),
-            ),
-          ),
-          categoryViewConfig: CategoryViewConfig(
-            backgroundColor: CriptivoColors.surface,
-            indicatorColor: CriptivoColors.neon,
-            iconColorSelected: CriptivoColors.neon,
-            iconColor: CriptivoColors.textSecondary,
-            dividerColor: CriptivoColors.surfaceLight,
-          ),
-          bottomActionBarConfig: BottomActionBarConfig(
-            backgroundColor: CriptivoColors.surface,
-            buttonColor: CriptivoColors.surfaceLight,
-            buttonIconColor: CriptivoColors.neon,
-          ),
-          searchViewConfig: SearchViewConfig(
-            backgroundColor: CriptivoColors.surface,
-            buttonIconColor: CriptivoColors.neon,
-            hintText: 'Търси emoji...',
-          ),
-        ),
       ),
     );
   }
@@ -1135,7 +1199,11 @@ class _ChatPageState extends State<ChatPage> {
                           ),
               ),
               _buildInputBar(),
-              if (_showEmojiPicker) _buildEmojiPanel(),
+              if (_showEmojiPicker)
+                ChatEmojiPanel(
+                  onEmojiSelected: _onEmojiSelected,
+                  onBackspace: _onEmojiBackspace,
+                ),
             ],
           ),
         ],

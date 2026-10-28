@@ -18,14 +18,14 @@ enum KeySyncStatus {
   /// Локалната двойка ключове е невалидна или непълна.
   invalidLocal,
 
-  /// Грешка при комуникация със Supabase или при синхронизацията.
+  /// Грешка при комуникация със Supabase или синхронизацията.
   error,
 }
 
 class AuthService {
   static final _supabase = Supabase.instance.client;
 
-  /// Последен резултат от sync на публичния ключ.
+  /// Последен резултат от синхронизацията на публичния ключ.
   static KeySyncStatus lastKeySyncStatus = KeySyncStatus.ok;
 
   static Future<bool> isUsernameAvailable(String username) async {
@@ -49,6 +49,9 @@ class AuthService {
     String? displayName,
   }) async {
     final normalizedUsername = username.trim().toLowerCase();
+    final normalizedDisplayName = displayName?.trim().isNotEmpty == true
+        ? displayName!.trim()
+        : normalizedUsername;
 
     final available = await isUsernameAvailable(normalizedUsername);
 
@@ -56,13 +59,13 @@ class AuthService {
       throw StateError('Този username вече е зает');
     }
 
-    // Генерираме ключове само когато и двата липсват.
+    // Генерираме ключове само ако и двата липсват.
     // Непълна или невалидна идентичност прекратява регистрацията.
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
 
-    // Проверяваме двойката отново, преди да публикуваме публичния ключ.
+    // Повторна проверка преди публикуване на публичния ключ.
     if (!await KeyManager.hasKeys()) {
       throw StateError(
         'Криптографските ключове не са налични. '
@@ -80,47 +83,59 @@ class AuthService {
     }
 
     final response = await _supabase.auth.signUp(
-      email: email,
+      email: email.trim(),
       password: password,
       data: {
         'username': normalizedUsername,
-        'display_name': displayName ?? normalizedUsername,
+        'display_name': normalizedDisplayName,
       },
     );
 
     final user = response.user;
 
     if (user != null) {
-      await _supabase
+      final result = await _supabase
           .from('profiles')
           .update({
             'public_key': publicKey,
             'username': normalizedUsername,
-            'display_name': displayName ?? normalizedUsername,
+            'display_name': normalizedDisplayName,
           })
-          .eq('id', user.id);
-    }
+          .eq('id', user.id)
+          .select('id')
+          .maybeSingle();
 
-    lastKeySyncStatus = KeySyncStatus.ok;
+      if (result == null) {
+        lastKeySyncStatus = KeySyncStatus.error;
+
+        throw StateError(
+          'Акаунтът е създаден, но профилът не беше актуализиран. '
+          'Не изтривай и не генерирай нови ключове. '
+          'Провери профила и настройките за достъп в Supabase.',
+        );
+      }
+
+      lastKeySyncStatus = KeySyncStatus.ok;
+    } else {
+      // При изискване за потвърждение на имейл Supabase
+      // може да не върне потребител веднага.
+      lastKeySyncStatus = KeySyncStatus.error;
+    }
 
     return response;
   }
 
   /// Входът не генерира нова криптографска идентичност.
+  ///
+  /// Синхронизацията се извършва от HomePage._init().
   static Future<AuthResponse> signIn({
     required String email,
     required String password,
   }) async {
-    final response = await _supabase.auth.signInWithPassword(
-      email: email,
+    return _supabase.auth.signInWithPassword(
+      email: email.trim(),
       password: password,
     );
-
-    if (response.session != null) {
-      await syncPublicKeyToProfile();
-    }
-
-    return response;
   }
 
   /// Безопасно синхронизира локалния публичен ключ с профила.
@@ -135,11 +150,11 @@ class AuthService {
     final user = currentUser;
 
     if (user == null) {
-      lastKeySyncStatus = KeySyncStatus.missingLocal;
+      lastKeySyncStatus = KeySyncStatus.error;
       return lastKeySyncStatus;
     }
 
-    final String local;
+    late final String local;
 
     // Първо валидираме локалната криптографска идентичност.
     try {
@@ -178,7 +193,14 @@ class AuthService {
           .eq('id', user.id)
           .maybeSingle();
 
-      final remote = row?['public_key'] as String?;
+      if (row == null) {
+        debugPrint('Criptivo: профилът на потребителя не беше намерен.');
+
+        lastKeySyncStatus = KeySyncStatus.error;
+        return lastKeySyncStatus;
+      }
+
+      final remote = row['public_key'] as String?;
 
       if (remote == null || remote.isEmpty) {
         final result = await _supabase
@@ -188,12 +210,10 @@ class AuthService {
             .select('id')
             .maybeSingle();
 
-        // UPDATE може да не промени ред, например заради RLS
-        // или ако профилът не съществува.
         if (result == null) {
           debugPrint(
             'Criptivo: публичният ключ не е публикуван. '
-            'Профилът липсва или записът не е разрешен.',
+            'Записът не е потвърден.',
           );
 
           lastKeySyncStatus = KeySyncStatus.error;
@@ -232,9 +252,9 @@ class AuthService {
 
   /// Публикува локалния ключ след изрично потвърдено възстановяване.
   ///
-  /// ВНИМАНИЕ: този метод заменя публичния ключ в профила.
-  /// Извиквай го само след успешно възстановяване на правилната
-  /// идентичност и изрично потвърждение от потребителя.
+  /// ВНИМАНИЕ: заменя публичния ключ в профила.
+  /// Използвай само след възстановяване на правилната идентичност
+  /// и изрично потвърждение от потребителя.
   static Future<void> forcePublishLocalPublicKey() async {
     final user = currentUser;
 

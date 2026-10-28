@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/auth/auth_service.dart';
 import 'core/crypto/key_manager.dart';
 import 'core/supabase_config.dart';
 import 'core/theme/chat_background_style.dart';
@@ -18,6 +15,7 @@ Future<void> main() async {
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.anonKey,
   );
+
   // Генерира ключове само ако липсват локално.
   await KeyManager.ensureKeys();
 
@@ -45,16 +43,8 @@ class CriptivoApp extends StatelessWidget {
   }
 }
 
-class AuthGate extends StatefulWidget {
+class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
-
-  @override
-  State<AuthGate> createState() => _AuthGateState();
-}
-
-class _AuthGateState extends State<AuthGate> {
-  bool _synced = false;
-  String? _syncedUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -62,21 +52,10 @@ class _AuthGateState extends State<AuthGate> {
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
         final session = Supabase.instance.client.auth.currentSession;
-        final userId = session?.user.id;
 
-        if (session != null && userId != null) {
-          // Синхронизира публичния ключ веднъж за всеки потребител.
-          if (!_synced || _syncedUserId != userId) {
-            _synced = true;
-            _syncedUserId = userId;
-            unawaited(AuthService.syncPublicKeyToProfile());
-          }
-
+        if (session != null) {
           return const HomePage();
         }
-
-        _synced = false;
-        _syncedUserId = null;
 
         return const LoginPage();
       },

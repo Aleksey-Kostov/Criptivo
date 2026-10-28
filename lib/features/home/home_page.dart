@@ -22,6 +22,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _conversations = [];
   bool _loading = true;
+  bool _keySyncInProgress = false;
+  bool _initializationInProgress = false;
+
+  KeySyncStatus _keySyncStatus = KeySyncStatus.error;
 
   final Set<String> _unread = {};
   final Set<String> _notifiedMessageIds = {};
@@ -43,28 +47,59 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _init() async {
-    await ConversationPreviewStore.load();
+    if (_initializationInProgress) return;
 
-    if (!mounted) return;
+    _initializationInProgress = true;
 
-    await _forceSyncKey();
-    if (!mounted) return;
+    if (mounted) {
+      setState(() => _loading = true);
+    }
 
-    await _loadConversations();
-    if (!mounted) return;
+    try {
+      await ConversationPreviewStore.load();
 
-    _subscribeToNewMessages();
-    _subscribeToReactions();
-    _startPoll();
+      if (!mounted) return;
+
+      final status = await _forceSyncKey();
+
+      if (!mounted) return;
+
+      if (status != KeySyncStatus.ok) {
+        setState(() => _loading = false);
+        return;
+      }
+
+      await _loadConversations();
+
+      if (!mounted) return;
+
+      _subscribeToNewMessages();
+      _subscribeToReactions();
+      _startPoll();
+    } finally {
+      _initializationInProgress = false;
+    }
   }
 
-  /// Безопасна синхронизация на локалния и сървърния публичен ключ.
+  /// Безопасно проверява локалния и сървърния публичен ключ.
   ///
   /// Не генерира нова идентичност и не презаписва автоматично
   /// съществуващия сървърен публичен ключ.
-  Future<void> _forceSyncKey() async {
+  Future<KeySyncStatus> _forceSyncKey() async {
+    if (_keySyncInProgress) {
+      return _keySyncStatus;
+    }
+
+    _keySyncInProgress = true;
+
     try {
       final status = await AuthService.syncPublicKeyToProfile();
+
+      if (!mounted) return status;
+
+      setState(() {
+        _keySyncStatus = status;
+      });
 
       switch (status) {
         case KeySyncStatus.ok:
@@ -73,35 +108,39 @@ class _HomePageState extends State<HomePage> {
 
         case KeySyncStatus.mismatch:
           debugPrint(
-            'Criptivo: открито е несъответствие на публичните ключове. '
-            'Сървърният ключ не е променен. '
-            'Необходимо е възстановяване на правилния ключ от backup.',
+            'Criptivo: несъответствие на публичните ключове. '
+            'Сървърният ключ не е променен.',
           );
           break;
 
         case KeySyncStatus.missingLocal:
-          debugPrint(
-            'Criptivo: локалните криптографски ключове липсват. '
-            'Не се генерира автоматично нова самоличност.',
-          );
+          debugPrint('Criptivo: локалните криптографски ключове липсват.');
           break;
 
         case KeySyncStatus.invalidLocal:
           debugPrint(
-            'Criptivo: локалната криптографска идентичност е невалидна. '
-            'Публичният ключ няма да бъде публикуван.',
+            'Criptivo: локалната криптографска идентичност е невалидна.',
           );
           break;
 
         case KeySyncStatus.error:
-          debugPrint(
-            'Criptivo: синхронизацията на публичния ключ не успя. '
-            'Провери връзката и опитай отново.',
-          );
+          debugPrint('Criptivo: синхронизацията на публичния ключ не успя.');
           break;
       }
+
+      return status;
     } catch (e) {
-      debugPrint('Criptivo: безопасната синхронизация се провали: $e');
+      debugPrint('Criptivo: синхронизацията се провали: $e');
+
+      if (mounted) {
+        setState(() {
+          _keySyncStatus = KeySyncStatus.error;
+        });
+      }
+
+      return KeySyncStatus.error;
+    } finally {
+      _keySyncInProgress = false;
     }
   }
 
@@ -169,6 +208,8 @@ class _HomePageState extends State<HomePage> {
           schema: 'public',
           table: 'messages',
           callback: (payload) {
+            if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
+
             final row = Map<String, dynamic>.from(payload.newRecord);
             final senderId = row['sender_id'] as String?;
             final conversationId = row['conversation_id'] as String?;
@@ -209,6 +250,8 @@ class _HomePageState extends State<HomePage> {
           schema: 'public',
           table: 'message_reactions',
           callback: (payload) async {
+            if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
+
             final row = Map<String, dynamic>.from(payload.newRecord);
             final reactionId = row['id'] as String?;
             final messageId = row['message_id'] as String?;
@@ -226,6 +269,7 @@ class _HomePageState extends State<HomePage> {
                   .eq('id', messageId)
                   .maybeSingle();
 
+              if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
               if (msg == null) return;
               if (msg['sender_id'] != myId) return;
 
@@ -282,14 +326,14 @@ class _HomePageState extends State<HomePage> {
     _pollTimer?.cancel();
 
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (mounted) {
+      if (mounted && _keySyncStatus == KeySyncStatus.ok) {
         _loadConversations(quiet: true);
       }
     });
   }
 
   void _onIncomingMessage(String conversationId) {
-    if (!mounted) return;
+    if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
     if (conversationId == _activeConversationId) return;
 
     setState(() {
@@ -353,16 +397,59 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openChat(Map<String, dynamic> item) async {
-    final conversationId = item['conversation_id'] as String;
+    if (_keySyncInProgress ||
+        _keySyncStatus != KeySyncStatus.ok ||
+        _initializationInProgress) {
+      return;
+    }
+
+    final conversationId = item['conversation_id'] as String?;
+
+    if (conversationId == null || conversationId.isEmpty) return;
 
     _clearNotificationUi();
 
+    final previousConversationId = _activeConversationId;
+
     setState(() {
-      _unread.remove(conversationId);
       _activeConversationId = conversationId;
+      _unread.remove(conversationId);
     });
 
-    await _forceSyncKey();
+    final status = await _forceSyncKey();
+
+    if (!mounted) return;
+
+    if (status != KeySyncStatus.ok) {
+      setState(() {
+        _activeConversationId = previousConversationId;
+      });
+
+      _clearNotificationUi();
+
+      final message = switch (status) {
+        KeySyncStatus.mismatch =>
+          'Ключовете не съвпадат. Възстанови правилната идентичност от backup.',
+        KeySyncStatus.missingLocal =>
+          'Локалните ключове липсват. Не генерирай нова идентичност.',
+        KeySyncStatus.invalidLocal =>
+          'Локалните ключове са невалидни. Провери възстановяването им.',
+        KeySyncStatus.error =>
+          'Неуспешна проверка на ключовете. Провери връзката и опитай отново.',
+        KeySyncStatus.ok => '',
+      };
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: CriptivoColors.surfaceLight,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+
+      return;
+    }
 
     final other = item['other_user'] as Map<String, dynamic>?;
     final otherId = other?['id'] as String? ?? item['other_user_id'] as String?;
@@ -409,7 +496,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadConversations({bool quiet = false}) async {
-    if (!mounted) return;
+    if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
 
     if (!quiet) {
       setState(() => _loading = true);
@@ -418,7 +505,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final list = await ChatService.getMyConversations();
 
-      if (!mounted) return;
+      if (!mounted || _keySyncStatus != KeySyncStatus.ok) return;
 
       if (quiet && _conversations.isNotEmpty) {
         for (final item in list) {
@@ -465,10 +552,7 @@ class _HomePageState extends State<HomePage> {
 
       setState(() {
         _conversations = list;
-
-        if (!quiet) {
-          _loading = false;
-        }
+        _loading = false;
       });
     } catch (e) {
       debugPrint('Грешка при зареждане на разговори: $e');
@@ -488,6 +572,59 @@ class _HomePageState extends State<HomePage> {
     _reactionsChannel?.unsubscribe();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Widget _buildKeySyncError() {
+    final message = switch (_keySyncStatus) {
+      KeySyncStatus.mismatch => 'Локалният ключ не съвпада със сървърния. Необходимо е безопасно възстановяване.',
+      KeySyncStatus.missingLocal =>
+        'Локалните криптографски ключове липсват. Не генерирай нови ключове.',
+      KeySyncStatus.invalidLocal =>
+        'Локалната криптографска идентичност е невалидна.',
+      KeySyncStatus.error =>
+        'Проверката на криптографската идентичност не успя.',
+      KeySyncStatus.ok => '',
+    };
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.lock_outline_rounded,
+              size: 48,
+              color: CriptivoColors.neon,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Чатовете са временно блокирани',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: CriptivoColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: CriptivoColors.textSecondary),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _initializationInProgress || _keySyncInProgress
+                  ? null
+                  : _init,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Провери отново'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildAvatar(Map<String, dynamic>? other, String name) {
@@ -633,6 +770,8 @@ class _HomePageState extends State<HomePage> {
           ? const Center(
               child: CircularProgressIndicator(color: CriptivoColors.neon),
             )
+          : _keySyncStatus != KeySyncStatus.ok
+          ? _buildKeySyncError()
           : Column(
               children: [
                 if (_conversations.isNotEmpty) _buildSearchBar(),
@@ -752,16 +891,18 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NewChatPage()),
-          );
+        onPressed: _keySyncStatus != KeySyncStatus.ok || _loading
+            ? null
+            : () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NewChatPage()),
+                );
 
-          if (mounted) {
-            await _loadConversations();
-          }
-        },
+                if (mounted) {
+                  await _loadConversations();
+                }
+              },
         child: const Icon(Icons.chat),
       ),
     );

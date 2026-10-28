@@ -3,27 +3,34 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../crypto/key_manager.dart';
 
-/// Резултат от sync на public key — за UI.
+/// Резултат от синхронизацията на публичния ключ.
 enum KeySyncStatus {
-  /// Локалният ключ = сървърния (или сървърът беше празен и го записахме).
+  /// Локалният ключ съвпада със сървърния или е публикуван успешно.
   ok,
 
-  /// Локално има ключове, на сървъра — друг public key.
-  /// НЕ презаписваме. Трябва restore от backup.
+  /// Локалният и сървърният публичен ключ се различават.
+  /// Сървърният ключ не се презаписва автоматично.
   mismatch,
 
-  /// Няма локален public key.
+  /// Липсва локална криптографска идентичност.
   missingLocal,
+
+  /// Локалната двойка ключове е невалидна или непълна.
+  invalidLocal,
+
+  /// Грешка при комуникация със Supabase или при синхронизацията.
+  error,
 }
 
 class AuthService {
   static final _supabase = Supabase.instance.client;
 
-  /// Последен статус след [syncPublicKeyToProfile] (за Settings / banner).
+  /// Последен резултат от sync на публичния ключ.
   static KeySyncStatus lastKeySyncStatus = KeySyncStatus.ok;
 
   static Future<bool> isUsernameAvailable(String username) async {
     final normalized = username.trim().toLowerCase();
+
     if (normalized.isEmpty) return false;
 
     final row = await _supabase
@@ -44,18 +51,30 @@ class AuthService {
     final normalizedUsername = username.trim().toLowerCase();
 
     final available = await isUsernameAvailable(normalizedUsername);
+
     if (!available) {
       throw StateError('Този username вече е зает');
     }
 
+    // Генерираме ключове само когато и двата липсват.
+    // Непълна или невалидна идентичност прекратява регистрацията.
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
 
-    final publicKey = await KeyManager.getPublicKeyBase64();
-    if (publicKey == null || publicKey.isEmpty) {
+    // Проверяваме двойката отново, преди да публикуваме публичния ключ.
+    if (!await KeyManager.hasKeys()) {
       throw StateError(
         'Криптографските ключове не са налични. '
+        'Регистрацията не може да продължи безопасно.',
+      );
+    }
+
+    final publicKey = await KeyManager.getPublicKeyBase64();
+
+    if (publicKey == null || publicKey.isEmpty) {
+      throw StateError(
+        'Публичният ключ липсва. '
         'Регистрацията не може да продължи безопасно.',
       );
     }
@@ -70,6 +89,7 @@ class AuthService {
     );
 
     final user = response.user;
+
     if (user != null) {
       await _supabase
           .from('profiles')
@@ -82,10 +102,11 @@ class AuthService {
     }
 
     lastKeySyncStatus = KeySyncStatus.ok;
+
     return response;
   }
 
-  /// Вход — НЕ генерира ключове. Sync е внимателен (виж [syncPublicKeyToProfile]).
+  /// Входът не генерира нова криптографска идентичност.
   static Future<AuthResponse> signIn({
     required String email,
     required String password,
@@ -102,26 +123,54 @@ class AuthService {
     return response;
   }
 
-  /// Синхронизация на public key.
+  /// Безопасно синхронизира локалния публичен ключ с профила.
   ///
-  /// - Ако на сървъра няма ключ → записваме локалния.
-  /// - Ако локалният == сървърния → OK.
-  /// - Ако се различават → **НЕ презаписваме** (иначе чупим старите съобщения
-  ///   и другите устройства). Връща [KeySyncStatus.mismatch].
+  /// - Липсваща локална идентичност: missingLocal.
+  /// - Невалидна локална двойка: invalidLocal.
+  /// - Празен сървърен ключ: опит за публикуване на локалния ключ.
+  /// - Съвпадащи ключове: ok.
+  /// - Различни ключове: mismatch, без презаписване.
+  /// - Грешка при заявка или запис: error.
   static Future<KeySyncStatus> syncPublicKeyToProfile() async {
     final user = currentUser;
+
     if (user == null) {
       lastKeySyncStatus = KeySyncStatus.missingLocal;
       return lastKeySyncStatus;
     }
 
-    final local = await KeyManager.getPublicKeyBase64();
-    if (local == null || local.isEmpty) {
-      debugPrint('syncPublicKeyToProfile: няма локален public key');
-      lastKeySyncStatus = KeySyncStatus.missingLocal;
+    final String local;
+
+    // Първо валидираме локалната криптографска идентичност.
+    try {
+      final hasKeys = await KeyManager.hasKeys();
+
+      if (!hasKeys) {
+        debugPrint('Criptivo: локалните криптографски ключове липсват.');
+
+        lastKeySyncStatus = KeySyncStatus.missingLocal;
+        return lastKeySyncStatus;
+      }
+
+      final publicKey = await KeyManager.getPublicKeyBase64();
+
+      if (publicKey == null || publicKey.isEmpty) {
+        lastKeySyncStatus = KeySyncStatus.invalidLocal;
+        return lastKeySyncStatus;
+      }
+
+      local = publicKey;
+    } catch (e) {
+      debugPrint(
+        'Criptivo: локалната криптографска идентичност '
+        'не премина проверката: $e',
+      );
+
+      lastKeySyncStatus = KeySyncStatus.invalidLocal;
       return lastKeySyncStatus;
     }
 
+    // Следващите грешки се отнасят до Supabase или синхронизацията.
     try {
       final row = await _supabase
           .from('profiles')
@@ -132,48 +181,110 @@ class AuthService {
       final remote = row?['public_key'] as String?;
 
       if (remote == null || remote.isEmpty) {
-        await _supabase
+        final result = await _supabase
             .from('profiles')
             .update({'public_key': local})
-            .eq('id', user.id);
-        debugPrint('Public key записан (сървърът беше празен): $local');
+            .eq('id', user.id)
+            .select('id')
+            .maybeSingle();
+
+        // UPDATE може да не промени ред, например заради RLS
+        // или ако профилът не съществува.
+        if (result == null) {
+          debugPrint(
+            'Criptivo: публичният ключ не е публикуван. '
+            'Профилът липсва или записът не е разрешен.',
+          );
+
+          lastKeySyncStatus = KeySyncStatus.error;
+          return lastKeySyncStatus;
+        }
+
+        debugPrint('Criptivo: публичният ключ е публикуван.');
+
         lastKeySyncStatus = KeySyncStatus.ok;
         return lastKeySyncStatus;
       }
 
       if (remote == local) {
-        debugPrint('Public key OK (локален == сървър): $local');
+        debugPrint('Criptivo: локалният и сървърният публичен ключ съвпадат.');
+
         lastKeySyncStatus = KeySyncStatus.ok;
         return lastKeySyncStatus;
       }
 
-      // MISMATCH — критично: не пипаме сървъра
+      // Критично: не заменяме сървърната идентичност автоматично.
       debugPrint(
-        'Key MISMATCH: local=$local remote=$remote — '
-        'нужен е Key Backup restore. Сървърният ключ НЕ е презаписан.',
+        'Criptivo: открито е несъответствие на публичните ключове. '
+        'Сървърният ключ не е променен. '
+        'Необходимо е възстановяване на правилната идентичност.',
       );
+
       lastKeySyncStatus = KeySyncStatus.mismatch;
       return lastKeySyncStatus;
     } catch (e) {
-      debugPrint('Грешка при sync на public key: $e');
-      lastKeySyncStatus = KeySyncStatus.missingLocal;
+      debugPrint('Criptivo: синхронизацията на публичния ключ се провали: $e');
+
+      lastKeySyncStatus = KeySyncStatus.error;
       return lastKeySyncStatus;
     }
   }
 
-  /// След успешен import на backup — форсира запис на локалния ключ към профила.
+  /// Публикува локалния ключ след изрично потвърдено възстановяване.
+  ///
+  /// ВНИМАНИЕ: този метод заменя публичния ключ в профила.
+  /// Извиквай го само след успешно възстановяване на правилната
+  /// идентичност и изрично потвърждение от потребителя.
   static Future<void> forcePublishLocalPublicKey() async {
     final user = currentUser;
-    if (user == null) return;
-    final local = await KeyManager.getPublicKeyBase64();
-    if (local == null || local.isEmpty) return;
 
-    await _supabase
+    if (user == null) {
+      throw StateError(
+        'Няма влязъл потребител. Публичният ключ не е публикуван.',
+      );
+    }
+
+    final hasKeys = await KeyManager.hasKeys();
+
+    if (!hasKeys) {
+      throw StateError(
+        'Локалните криптографски ключове липсват. '
+        'Публичният ключ не е публикуван.',
+      );
+    }
+
+    final local = await KeyManager.getPublicKeyBase64();
+
+    if (local == null || local.isEmpty) {
+      throw StateError(
+        'Локалният публичен ключ липсва. '
+        'Публичният ключ не е публикуван.',
+      );
+    }
+
+    final result = await _supabase
         .from('profiles')
         .update({'public_key': local})
-        .eq('id', user.id);
+        .eq('id', user.id)
+        .select('id')
+        .maybeSingle();
+
+    if (result == null) {
+      lastKeySyncStatus = KeySyncStatus.error;
+
+      throw StateError(
+        'Публичният ключ не беше публикуван. '
+        'Профилът липсва или записът не е разрешен.',
+      );
+    }
+
     lastKeySyncStatus = KeySyncStatus.ok;
-    debugPrint('Public key force-published: $local');
+
+    // Не записваме самия ключ в логовете.
+    debugPrint(
+      'Criptivo: публичният ключ е публикуван '
+      'след потвърдено възстановяване.',
+    );
   }
 
   static Future<void> signOut() async {

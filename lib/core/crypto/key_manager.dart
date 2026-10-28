@@ -74,7 +74,7 @@ class KeyManager {
     }
   }
 
-  /// Записва ключ само в защитеното хранилище.
+  /// Записва ключ само в защитеното хранилище и проверява резултата.
   static Future<void> _write(String key, String value) async {
     try {
       await _secure.write(key: key, value: value);
@@ -178,9 +178,7 @@ class KeyManager {
     return true;
   }
 
-  /// Генерира нова двойка ключове само ако няма записани ключове.
-  ///
-  /// Не използвай този метод за смяна на съществуваща идентичност.
+  /// Генерира нова двойка само ако няма записани ключове.
   static Future<void> generateAndStoreKeys() async {
     final existingPrivate = await _read(_privateKeyKey);
     final existingPublic = await _read(_publicKeyKey);
@@ -207,12 +205,12 @@ class KeyManager {
 
     try {
       await _write(_publicKeyKey, publicBase64);
+      await hasKeys();
     } catch (_) {
-      // Не оставяме частично създадена идентичност да се използва.
       try {
         await _delete(_privateKeyKey);
       } catch (_) {
-        // Запазваме първоначалната грешка.
+        // Не скриваме първоначалната грешка.
       }
       rethrow;
     }
@@ -220,10 +218,8 @@ class KeyManager {
     debugPrint('KeyManager: новата двойка ключове е записана.');
   }
 
-  /// Запазва съществуващата валидна идентичност.
-  ///
-  /// Генерира ключове само ако и двата ключа липсват.
-  /// При частична или невалидна идентичност спира.
+  /// Запазва валидната идентичност или генерира нова,
+  /// само когато и двата ключа липсват.
   static Future<void> ensureKeys() async {
     final exists = await hasKeys();
 
@@ -245,24 +241,39 @@ class KeyManager {
       return null;
     }
 
-    return base64Decode(value);
+    try {
+      final bytes = base64Decode(value);
+
+      if (bytes.length != 32) {
+        throw const FormatException();
+      }
+
+      return bytes;
+    } catch (_) {
+      throw StateError('Записаният частен ключ е невалиден.');
+    }
   }
 
   /// Възстановява двойка ключове от архив.
-  /// Проверява, че публичният ключ съответства на частния.
   ///
-  /// Внимание: този метод може да замени съществуваща двойка.
-  /// Извиквай го само след изрично потвърждение от потребителя.
+  /// Проверява двойката, пази старото състояние и проверява
+  /// записаните стойности. При неуспех се опитва да върне
+  /// предишното състояние.
+  ///
+  /// Извиквай само след изрично потвърждение от потребителя.
   static Future<void> importKeyPair({
     required String privateKeyBase64,
     required String publicKeyBase64,
   }) async {
+    final String normalizedPrivate = privateKeyBase64.trim();
+    final String normalizedPublic = publicKeyBase64.trim();
+
     final List<int> privateBytes;
     final List<int> publicBytes;
 
     try {
-      privateBytes = base64Decode(privateKeyBase64);
-      publicBytes = base64Decode(publicKeyBase64);
+      privateBytes = base64Decode(normalizedPrivate);
+      publicBytes = base64Decode(normalizedPublic);
     } catch (_) {
       throw ArgumentError('Архивът съдържа невалиден Base64 ключ.');
     }
@@ -280,15 +291,66 @@ class KeyManager {
 
     if (!_bytesEqual(derivedPublic.bytes, publicBytes)) {
       throw StateError(
-        'Публичният ключ не съответства на частния. Архивът може да е повреден.',
+        'Публичният ключ не съответства на частния. '
+        'Архивът може да е повреден.',
       );
     }
 
-    // Не изтриваме старите ключове автоматично при грешка.
-    await _write(_privateKeyKey, privateKeyBase64);
-    await _write(_publicKeyKey, publicKeyBase64);
+    // Запазваме предишното състояние, преди да променим нещо.
+    final oldPrivate = await _read(_privateKeyKey);
+    final oldPublic = await _read(_publicKeyKey);
 
-    debugPrint('KeyManager: ключовете са възстановени от архив.');
+    try {
+      await _write(_privateKeyKey, base64Encode(privateBytes));
+      await _write(_publicKeyKey, base64Encode(publicBytes));
+
+      // Не приемаме импорта за успешен, докато двойката
+      // не бъде прочетена обратно и криптографски проверена.
+      final isValid = await hasKeys();
+
+      if (!isValid) {
+        throw StateError('Проверката на възстановената двойка е неуспешна.');
+      }
+    } catch (_) {
+      var rollbackSucceeded = true;
+
+      // Опитваме да възстановим и двата ключа независимо.
+      try {
+        await _restoreValue(_privateKeyKey, oldPrivate);
+      } catch (_) {
+        rollbackSucceeded = false;
+      }
+
+      try {
+        await _restoreValue(_publicKeyKey, oldPublic);
+      } catch (_) {
+        rollbackSucceeded = false;
+      }
+
+      if (!rollbackSucceeded) {
+        throw StateError(
+          'Критична грешка при възстановяване на ключовете: '
+          'импортът се провали и старото състояние не можа да бъде '
+          'възстановено напълно. Не генерирай нови ключове и не изтривай '
+          'данните на приложението. Необходима е проверка на защитеното '
+          'хранилище.',
+        );
+      }
+
+      // Предишното състояние е възстановено; връщаме първоначалната грешка.
+      rethrow;
+    }
+
+    debugPrint('KeyManager: ключовете са възстановени и проверени.');
+  }
+
+  /// Възстановява конкретна стара стойност или липсата ѝ.
+  static Future<void> _restoreValue(String key, String? value) async {
+    if (value == null || value.isEmpty) {
+      await _delete(key);
+    } else {
+      await _write(key, value);
+    }
   }
 
   /// Кратък fingerprint за показване в интерфейса.

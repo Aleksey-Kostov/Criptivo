@@ -44,18 +44,24 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _init() async {
     await ConversationPreviewStore.load();
+
+    if (!mounted) return;
+
     await _forceSyncKey();
+    if (!mounted) return;
+
     await _loadConversations();
+    if (!mounted) return;
+
     _subscribeToNewMessages();
     _subscribeToReactions();
     _startPoll();
   }
 
-  /// Безопасна синхронизация на ключа.
+  /// Безопасна синхронизация на локалния и сървърния публичен ключ.
   ///
-  /// Не генерира нова самоличност и не презаписва съществуващия
-  /// сървърен публичен ключ. При несъответствие е необходимо
-  /// възстановяване на правилния ключ от backup.
+  /// Не генерира нова идентичност и не презаписва автоматично
+  /// съществуващия сървърен публичен ключ.
   Future<void> _forceSyncKey() async {
     try {
       final status = await AuthService.syncPublicKeyToProfile();
@@ -64,23 +70,38 @@ class _HomePageState extends State<HomePage> {
         case KeySyncStatus.ok:
           debugPrint('Criptivo: public key sync OK.');
           break;
+
         case KeySyncStatus.mismatch:
           debugPrint(
-            'Criptivo: public key mismatch. '
+            'Criptivo: открито е несъответствие на публичните ключове. '
             'Сървърният ключ не е променен. '
-            'Провери и възстанови ключа от backup.',
+            'Необходимо е възстановяване на правилния ключ от backup.',
           );
           break;
+
         case KeySyncStatus.missingLocal:
           debugPrint(
-            'Criptivo: локалният публичен ключ липсва '
-            'или синхронизацията не е успешна. '
+            'Criptivo: локалните криптографски ключове липсват. '
             'Не се генерира автоматично нова самоличност.',
+          );
+          break;
+
+        case KeySyncStatus.invalidLocal:
+          debugPrint(
+            'Criptivo: локалната криптографска идентичност е невалидна. '
+            'Публичният ключ няма да бъде публикуван.',
+          );
+          break;
+
+        case KeySyncStatus.error:
+          debugPrint(
+            'Criptivo: синхронизацията на публичния ключ не успя. '
+            'Провери връзката и опитай отново.',
           );
           break;
       }
     } catch (e) {
-      debugPrint('Безопасната синхронизация на ключа се провали: $e');
+      debugPrint('Criptivo: безопасната синхронизация се провали: $e');
     }
   }
 
@@ -91,6 +112,7 @@ class _HomePageState extends State<HomePage> {
 
   String _formatLastAt(dynamic lastMessageAt) {
     if (lastMessageAt == null) return '';
+
     try {
       final dt = DateTime.parse(lastMessageAt.toString()).toLocal();
       final now = DateTime.now();
@@ -103,11 +125,14 @@ class _HomePageState extends State<HomePage> {
         final m = dt.minute.toString().padLeft(2, '0');
         return '$h:$m';
       }
+
       if (diff == 1) return 'Вчера';
-      if (diff < 7) {
+
+      if (diff >= 0 && diff < 7) {
         const days = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'нд'];
         return days[dt.weekday - 1];
       }
+
       return '${dt.day}.${dt.month.toString().padLeft(2, '0')}';
     } catch (_) {
       return '';
@@ -116,6 +141,7 @@ class _HomePageState extends State<HomePage> {
 
   List<Map<String, dynamic>> get _filteredConversations {
     final q = _searchQuery.trim().toLowerCase();
+
     if (q.isEmpty) return _conversations;
 
     return _conversations.where((item) {
@@ -125,6 +151,7 @@ class _HomePageState extends State<HomePage> {
       final convId = item['conversation_id'] as String? ?? '';
       final preview = (ConversationPreviewStore.get(convId)?.preview ?? '')
           .toLowerCase();
+
       return name.contains(q) || username.contains(q) || preview.contains(q);
     }).toList();
   }
@@ -134,6 +161,7 @@ class _HomePageState extends State<HomePage> {
     if (myId == null) return;
 
     _messagesChannel?.unsubscribe();
+
     _messagesChannel = Supabase.instance.client
         .channel('home-messages-$myId')
         .onPostgresChanges(
@@ -157,6 +185,7 @@ class _HomePageState extends State<HomePage> {
             if (messageId != null && _notifiedMessageIds.contains(messageId)) {
               return;
             }
+
             if (messageId != null) {
               _notifiedMessageIds.add(messageId);
             }
@@ -172,6 +201,7 @@ class _HomePageState extends State<HomePage> {
     if (myId == null) return;
 
     _reactionsChannel?.unsubscribe();
+
     _reactionsChannel = Supabase.instance.client
         .channel('home-reactions-$myId')
         .onPostgresChanges(
@@ -221,6 +251,7 @@ class _HomePageState extends State<HomePage> {
               setState(() => _unread.add(conversationId));
 
               _clearNotificationUi();
+
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('$name реагира с $emoji'),
@@ -249,8 +280,11 @@ class _HomePageState extends State<HomePage> {
 
   void _startPoll() {
     _pollTimer?.cancel();
+
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      _loadConversations(quiet: true);
+      if (mounted) {
+        _loadConversations(quiet: true);
+      }
     });
   }
 
@@ -271,6 +305,7 @@ class _HomePageState extends State<HomePage> {
     final name = other?['display_name'] ?? other?['username'] ?? 'Някой';
 
     _clearNotificationUi();
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Ново съобщение от $name'),
@@ -321,6 +356,7 @@ class _HomePageState extends State<HomePage> {
     final conversationId = item['conversation_id'] as String;
 
     _clearNotificationUi();
+
     setState(() {
       _unread.remove(conversationId);
       _activeConversationId = conversationId;
@@ -343,14 +379,17 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (!mounted) return;
+
     setState(() {
       _activeConversationId = null;
       _unread.remove(conversationId);
     });
+
     _clearNotificationUi();
 
     await ConversationPreviewStore.load();
     await _loadConversations();
+
     if (mounted) setState(() {});
   }
 
@@ -360,6 +399,7 @@ class _HomePageState extends State<HomePage> {
   ) async {
     final id = other?['id'] as String?;
     if (id == null) return;
+
     await PublicProfileSheet.show(
       context,
       userId: id,
@@ -370,17 +410,21 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadConversations({bool quiet = false}) async {
     if (!mounted) return;
-    if (!quiet) setState(() => _loading = true);
+
+    if (!quiet) {
+      setState(() => _loading = true);
+    }
 
     try {
       final list = await ChatService.getMyConversations();
+
       if (!mounted) return;
 
       if (quiet && _conversations.isNotEmpty) {
         for (final item in list) {
           final id = item['conversation_id'] as String?;
-          if (id == null) continue;
-          if (id == _activeConversationId) continue;
+
+          if (id == null || id == _activeConversationId) continue;
 
           final old = _conversations.cast<Map<String, dynamic>?>().firstWhere(
             (c) => c?['conversation_id'] == id,
@@ -398,6 +442,7 @@ class _HomePageState extends State<HomePage> {
                 other?['display_name'] ?? other?['username'] ?? 'Някой';
 
             _clearNotificationUi();
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Ново съобщение от $name'),
@@ -420,12 +465,19 @@ class _HomePageState extends State<HomePage> {
 
       setState(() {
         _conversations = list;
-        if (!quiet) _loading = false;
+
+        if (!quiet) {
+          _loading = false;
+        }
       });
     } catch (e) {
       debugPrint('Грешка при зареждане на разговори: $e');
+
       if (!mounted) return;
-      if (!quiet) setState(() => _loading = false);
+
+      if (!quiet) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -533,12 +585,19 @@ class _HomePageState extends State<HomePage> {
     Map<String, dynamic>? other,
   ) {
     final preview = ConversationPreviewStore.get(conversationId);
+
     if (preview != null && preview.preview.isNotEmpty) {
       return preview.preview;
     }
+
     if (isUnread) return 'Ново съобщение';
+
     final username = other?['username'] as String?;
-    if (username != null && username.isNotEmpty) return '@$username';
+
+    if (username != null && username.isNotEmpty) {
+      return '@$username';
+    }
+
     return '';
   }
 
@@ -559,6 +618,7 @@ class _HomePageState extends State<HomePage> {
                 context,
                 MaterialPageRoute(builder: (_) => const ProfilePage()),
               );
+
               if (mounted) setState(() {});
             },
           ),
@@ -697,7 +757,10 @@ class _HomePageState extends State<HomePage> {
             context,
             MaterialPageRoute(builder: (_) => const NewChatPage()),
           );
-          _loadConversations();
+
+          if (mounted) {
+            await _loadConversations();
+          }
         },
         child: const Icon(Icons.chat),
       ),

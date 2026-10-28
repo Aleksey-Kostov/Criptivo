@@ -23,23 +23,32 @@ extension _ChatPageComposer on _ChatPageState {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending || _uploadingMedia) return;
-    setState(() {
+
+    _safeSetState(() {
       _sending = true;
       _error = null;
       _showEmojiPicker = false;
     });
+
     await _typingService?.setTyping(false);
+
     try {
       await _refreshTheirPublicKey();
+      if (!mounted) return;
+
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        setState(() => _error = 'Другият потребител няма public key');
+        _safeSetState(() {
+          _error = 'Другият потребител няма public key';
+        });
         return;
       }
+
       final plaintext = _composePlaintext(text);
       final replyPreview = _replyTo?.previewText;
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
-      setState(() {
+
+      _safeSetState(() {
         _messages.add({
           'id': tempId,
           'text': text,
@@ -55,15 +64,19 @@ extension _ChatPageComposer on _ChatPageState {
         _hasText = false;
         _replyTo = null;
       });
+
       _controller.clear();
       _scrollHelper.scrollToBottom();
+
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: plaintext,
         theirPublicKeyBase64: theirKey,
       );
+
       if (!mounted) return;
-      setState(() {
+
+      _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
         if (i != -1) {
           _messages[i] = {
@@ -77,6 +90,7 @@ extension _ChatPageComposer on _ChatPageState {
           };
         }
       });
+
       await _rememberPreview(
         plaintext: plaintext,
         isMe: true,
@@ -84,37 +98,51 @@ extension _ChatPageComposer on _ChatPageState {
         createdAt: inserted['created_at'],
       );
     } catch (e) {
-      setState(() {
+      if (!mounted) return;
+
+      _safeSetState(() {
         _messages.removeWhere(
           (m) => m['id'] is String && (m['id'] as String).startsWith('temp_'),
         );
         _error = 'Грешка при изпращане: $e';
       });
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) {
+        _safeSetState(() => _sending = false);
+      }
     }
   }
 
   Future<void> _sendPending() async {
     final p = _pending;
     if (p == null || _sending || _uploadingMedia) return;
-    setState(() {
+
+    _safeSetState(() {
       _uploadingMedia = true;
       _error = null;
       _showEmojiPicker = false;
     });
+
     try {
       await _refreshTheirPublicKey();
+      if (!mounted) return;
+
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        setState(() => _error = 'Другият потребител няма public key');
+        _safeSetState(() {
+          _error = 'Другият потребител няма public key';
+        });
         return;
       }
+
       final ref = await p.upload();
+      if (!mounted) return;
+
       final media = MediaCrypto.tryParseEnvelope(ref.envelopeJson);
       final preview = _displayFromPlaintext(ref.envelopeJson);
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
-      setState(() {
+
+      _safeSetState(() {
         _pending = null;
         _messages.add({
           'id': tempId,
@@ -128,14 +156,18 @@ extension _ChatPageComposer on _ChatPageState {
           'reactions': <Map<String, dynamic>>[],
         });
       });
+
       _scrollHelper.scrollToBottom();
+
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: ref.envelopeJson,
         theirPublicKeyBase64: theirKey,
       );
+
       if (!mounted) return;
-      setState(() {
+
+      _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
         if (i != -1) {
           _messages[i] = {
@@ -148,6 +180,7 @@ extension _ChatPageComposer on _ChatPageState {
           };
         }
       });
+
       await _rememberPreview(
         plaintext: ref.envelopeJson,
         isMe: true,
@@ -156,34 +189,46 @@ extension _ChatPageComposer on _ChatPageState {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Медия: $e');
+      _safeSetState(() => _error = 'Медия: $e');
     } finally {
-      if (mounted) setState(() => _uploadingMedia = false);
+      if (mounted) {
+        _safeSetState(() => _uploadingMedia = false);
+      }
     }
   }
 
   Future<void> _onVoiceRecorded(VoiceRecording rec) async {
     if (_sending || _uploadingMedia) return;
-    setState(() {
+
+    _safeSetState(() {
       _uploadingMedia = true;
       _error = null;
     });
+
     try {
       await _refreshTheirPublicKey();
+      if (!mounted) return;
+
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        setState(() => _error = 'Другият потребител няма public key');
+        _safeSetState(() {
+          _error = 'Другият потребител няма public key';
+        });
         return;
       }
+
       final uploaded = await MediaService.uploadVoiceFile(
         filePath: rec.filePath,
         durationMs: rec.durationMs,
       );
-      if (uploaded == null) return;
+
+      if (uploaded == null || !mounted) return;
+
       final media = MediaCrypto.tryParseEnvelope(uploaded.envelopeJson);
       final preview = _displayFromPlaintext(uploaded.envelopeJson);
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
-      setState(() {
+
+      _safeSetState(() {
         _messages.add({
           'id': tempId,
           'text': preview,
@@ -195,14 +240,18 @@ extension _ChatPageComposer on _ChatPageState {
           'reactions': <Map<String, dynamic>>[],
         });
       });
+
       _scrollHelper.scrollToBottom();
+
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
         plaintext: uploaded.envelopeJson,
         theirPublicKeyBase64: theirKey,
       );
+
       if (!mounted) return;
-      setState(() {
+
+      _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
         if (i != -1) {
           _messages[i] = {
@@ -215,6 +264,7 @@ extension _ChatPageComposer on _ChatPageState {
           };
         }
       });
+
       await _rememberPreview(
         plaintext: uploaded.envelopeJson,
         isMe: true,
@@ -222,9 +272,13 @@ extension _ChatPageComposer on _ChatPageState {
         createdAt: inserted['created_at'],
       );
     } catch (e) {
-      if (mounted) setState(() => _error = 'Глас: $e');
+      if (mounted) {
+        _safeSetState(() => _error = 'Глас: $e');
+      }
     } finally {
-      if (mounted) setState(() => _uploadingMedia = false);
+      if (mounted) {
+        _safeSetState(() => _uploadingMedia = false);
+      }
     }
   }
 
@@ -236,7 +290,8 @@ extension _ChatPageComposer on _ChatPageState {
     Uint8List? imageBytes,
   }) {
     final copy = List<int>.from(bytes);
-    setState(() {
+
+    _safeSetState(() {
       _pending = PendingAttachment(
         name: name,
         mime: mime,
@@ -257,7 +312,8 @@ extension _ChatPageComposer on _ChatPageState {
   Future<void> _pickPendingImage() async {
     try {
       final picked = await MediaService.pickImageLocal();
-      if (picked == null) return;
+      if (picked == null || !mounted) return;
+
       _setPendingBytes(
         bytes: picked.bytes,
         name: picked.name,
@@ -266,14 +322,17 @@ extension _ChatPageComposer on _ChatPageState {
         imageBytes: Uint8List.fromList(picked.bytes),
       );
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        _safeSetState(() => _error = e.toString());
+      }
     }
   }
 
   Future<void> _pickPendingVideo() async {
     try {
       final picked = await MediaService.pickVideoLocal();
-      if (picked == null) return;
+      if (picked == null || !mounted) return;
+
       _setPendingBytes(
         bytes: picked.bytes,
         name: picked.name,
@@ -281,14 +340,17 @@ extension _ChatPageComposer on _ChatPageState {
         kind: 'video',
       );
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        _safeSetState(() => _error = e.toString());
+      }
     }
   }
 
   Future<void> _pickPendingFile() async {
     try {
       final picked = await MediaService.pickFileLocal();
-      if (picked == null) return;
+      if (picked == null || !mounted) return;
+
       _setPendingBytes(
         bytes: picked.bytes,
         name: picked.name,
@@ -296,13 +358,18 @@ extension _ChatPageComposer on _ChatPageState {
         kind: 'file',
       );
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        _safeSetState(() => _error = e.toString());
+      }
     }
   }
 
   void _showAttachSheet() {
-    setState(() => _showEmojiPicker = false);
-    showModalBottomSheet(
+    if (!mounted) return;
+
+    _safeSetState(() => _showEmojiPicker = false);
+
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: CriptivoColors.surface,
       shape: const RoundedRectangleBorder(

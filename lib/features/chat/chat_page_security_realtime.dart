@@ -3,29 +3,37 @@ part of 'chat_page.dart';
 extension _ChatPageSecurityRealtime on _ChatPageState {
   Future<void> _showSafetyNumber() async {
     final theirKey = _theirPublicKey;
+
     if (theirKey == null || theirKey.isEmpty) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Липсва public key на събеседника')),
       );
       return;
     }
+
     final myPublicKey = await KeyManager.getPublicKeyBase64();
+
     if (myPublicKey == null || myPublicKey.isEmpty) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Липсва твоят public key')));
       return;
     }
+
     final number = await SafetyNumber.generate(
       myPublicKeyBase64: myPublicKey,
       theirPublicKeyBase64: theirKey,
     );
+
     final formatted = SafetyNumber.format(number);
+
     if (!mounted) return;
 
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: CriptivoColors.surface,
       shape: const RoundedRectangleBorder(
@@ -104,6 +112,7 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
                 child: ElevatedButton.icon(
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: formatted));
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Safety Number копиран'),
@@ -131,6 +140,7 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
   void _subscribeToMessages() {
     _channel?.unsubscribe();
+
     _channel = Supabase.instance.client
         .channel('messages:${widget.conversationId}')
         .onPostgresChanges(
@@ -139,20 +149,29 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
           table: 'messages',
           callback: (payload) async {
             final row = Map<String, dynamic>.from(payload.newRecord);
+
             if (row.isEmpty) return;
             if (row['conversation_id'] != widget.conversationId) return;
+
             final id = row['id'];
             if (_messages.any((m) => m['id'] == id)) return;
+
             final myId = AuthService.currentUser?.id;
             final isMe = row['sender_id'] == myId;
+
             if (isMe) return;
 
             String plaintext;
+
             try {
               if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
                 await _refreshTheirPublicKey();
               }
+
+              if (!mounted) return;
+
               final theirKey = _theirPublicKey;
+
               if (theirKey == null || theirKey.isEmpty) {
                 plaintext = '[липсва ключ]';
               } else {
@@ -168,14 +187,20 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             }
 
             if (!mounted) return;
+
             final msg = _messageFromPlaintext(row, plaintext, isMe);
-            setState(() => _messages.add(msg));
+
+            _safeSetState(() => _messages.add(msg));
+
             await _rememberPreview(
               plaintext: plaintext,
               isMe: false,
               messageId: row['id']?.toString(),
               createdAt: row['created_at'],
             );
+
+            if (!mounted) return;
+
             _scrollHelper.onIncomingMessage();
             await ChatService.markMessagesAsRead(widget.conversationId);
           },
@@ -186,14 +211,19 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
           table: 'messages',
           callback: (payload) {
             final row = Map<String, dynamic>.from(payload.newRecord);
+
             if (row['conversation_id'] != widget.conversationId) return;
+
             final id = row['id'];
             final readAt = row['read_at'];
+
             if (id == null || readAt == null) return;
+
             final i = _messages.indexWhere((m) => m['id'] == id);
-            if (i == -1) return;
-            if (!mounted) return;
-            setState(() {
+
+            if (i == -1 || !mounted) return;
+
+            _safeSetState(() {
               _messages[i] = {..._messages[i], 'read_at': readAt};
             });
           },
@@ -206,9 +236,12 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             final row = payload.newRecord.isNotEmpty
                 ? payload.newRecord
                 : payload.oldRecord;
+
             final messageId = row['message_id'] as String?;
+
             if (messageId == null) return;
             if (!_messages.any((m) => m['id'] == messageId)) return;
+
             await _refreshReactionsForMessage(messageId);
           },
         )
@@ -219,7 +252,10 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
   void _startPollFallback() {
     _pollTimer?.cancel();
+
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) return;
+
       if (!_loading && !_sending && !_uploadingMedia) {
         _loadMessagesQuiet();
       }
@@ -231,11 +267,14 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
+
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
         String plaintext;
+
         try {
           final theirKey = _theirPublicKey;
+
           if (theirKey == null || theirKey.isEmpty) {
             plaintext = '[липсва ключ]';
           } else {
@@ -248,17 +287,24 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
         } catch (_) {
           plaintext = '[не може да се декриптира]';
         }
+
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
+
       await _attachReactions(decrypted);
+
       if (!mounted) return;
+
       final grew = decrypted.length > _messages.length;
       final changed =
           decrypted.length != _messages.length || !_sameReadState(decrypted);
+
       if (changed) {
-        setState(() => _messages = decrypted);
+        _safeSetState(() => _messages = decrypted);
+
         if (decrypted.isNotEmpty) {
           final last = decrypted.last;
+
           await _rememberPreview(
             plaintext:
                 last['plaintext_raw'] as String? ??
@@ -269,7 +315,12 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             createdAt: last['created_at'],
           );
         }
-        if (grew) _scrollHelper.onIncomingMessage();
+
+        if (!mounted) return;
+
+        if (grew) {
+          _scrollHelper.onIncomingMessage();
+        }
       }
     } catch (e) {
       debugPrint('Poll error: $e');
@@ -278,27 +329,35 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
   bool _sameReadState(List<Map<String, dynamic>> next) {
     if (next.length != _messages.length) return false;
+
     for (var i = 0; i < next.length; i++) {
       if (next[i]['id'] != _messages[i]['id']) return false;
       if (next[i]['read_at'] != _messages[i]['read_at']) return false;
     }
+
     return true;
   }
 
   Future<void> _loadMessages() async {
-    setState(() {
+    if (!mounted) return;
+
+    _safeSetState(() {
       _loading = true;
       _error = null;
     });
+
     try {
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
+
       for (final row in rows) {
         final isMe = row['sender_id'] == myId;
         String plaintext;
+
         try {
           final theirKey = _theirPublicKey;
+
           if (theirKey == null || theirKey.isEmpty) {
             plaintext = '[липсва ключ]';
           } else {
@@ -312,18 +371,24 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
           plaintext = '[не може да се декриптира]';
           debugPrint('Decrypt error: $e');
         }
+
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
+
       await _attachReactions(decrypted);
+
       if (!mounted) return;
-      setState(() {
+
+      _safeSetState(() {
         _messages = decrypted;
         _loading = false;
       });
+
       if (decrypted.isNotEmpty) {
         final last = decrypted.last;
         final raw =
             last['plaintext_raw'] as String? ?? last['text'] as String? ?? '';
+
         await _rememberPreview(
           plaintext: raw,
           isMe: last['is_me'] == true,
@@ -331,10 +396,14 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
           createdAt: last['created_at'],
         );
       }
+
+      if (!mounted) return;
+
       _scrollHelper.scrollToBottom();
     } catch (e) {
       if (!mounted) return;
-      setState(() {
+
+      _safeSetState(() {
         _error = e.toString();
         _loading = false;
       });

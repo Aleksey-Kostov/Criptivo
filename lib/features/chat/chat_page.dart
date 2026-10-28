@@ -109,15 +109,25 @@ class _ChatPageState extends State<ChatPage> {
       widget.otherUser['id'] as String? ??
       widget.otherUser['other_user_id'] as String?;
 
+  /// Обновява състоянието само докато State обектът е монтиран.
+  ///
+  /// Може да се извиква от extension-ите в part файловете.
+  void _safeSetState(VoidCallback callback) {
+    if (!mounted) return;
+    setState(callback);
+  }
+
   @override
   void initState() {
     super.initState();
+
     _scrollHelper = ChatScrollHelper(
       controller: _scrollController,
       onChanged: () {
         if (mounted) setState(() {});
       },
     );
+
     _voiceRecorder = VoiceRecorderService();
     _focusNode.addListener(_onFocusChange);
     _initChat();

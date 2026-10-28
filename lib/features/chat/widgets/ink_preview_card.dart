@@ -83,7 +83,7 @@ class _LinkPreviewCardState extends State<LinkPreviewCard> {
                 child: Image.network(
                   d.imageUrl!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorBuilder: (_, _, _) => Container(
                     color: CriptivoColors.surfaceLight,
                     alignment: Alignment.center,
                     child: Icon(

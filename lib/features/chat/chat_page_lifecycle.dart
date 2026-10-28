@@ -1,301 +1,303 @@
-import 'dart:async';
-import 'dart:convert';
+part of 'chat_page.dart';
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+extension _ChatPageLifecycle on _ChatPageState {
+  Future<void> _initChat() async {
+    try {
+      await _refreshTheirPublicKey();
+      if (!mounted) return;
 
-import '../../core/auth/auth_service.dart';
-import '../../core/chat/chat_service.dart';
-import '../../core/chat/conversation_preview_store.dart';
-import '../../core/chat/link_preview_service.dart';
-import '../../core/chat/reaction_service.dart';
-import '../../core/chat/typing_service.dart';
-import '../../core/chat/voice_recorder_service.dart';
-import '../../core/crypto/glagolitic_seal.dart';
-import '../../core/crypto/key_manager.dart';
-import '../../core/crypto/media_crypto.dart';
-import '../../core/crypto/message_crypto.dart';
-import '../../core/crypto/safety_number.dart';
-import '../../core/crypto/view_once.dart';
-import '../../core/storage/media_local_cache.dart';
-import '../../core/storage/media_service.dart';
-import '../../core/theme/criptivo_theme.dart';
-import 'helpers/chat_date_labels.dart';
-import 'helpers/chat_scroll_helper.dart';
-import 'widgets/attach_preview_strip.dart';
-import 'widgets/chat_app_bar.dart';
-import 'widgets/chat_background_layer.dart';
-import 'widgets/chat_background_picker.dart';
-import 'widgets/chat_date_separator.dart';
-import 'widgets/chat_emoji_panel.dart';
-import 'widgets/chat_input_bar.dart';
-import 'widgets/ink_preview_card.dart';
-import 'widgets/media_message_content.dart';
-import 'widgets/message_actions_sheet.dart';
-import 'widgets/reaction_bar.dart';
-import 'widgets/reaction_picker.dart';
-import 'widgets/reply_preview_bar.dart';
-import 'widgets/scroll_to_bottom_button.dart';
-import 'widgets/typing_indicator.dart';
-import 'widgets/view_once_tile.dart';
+      await _loadConversationMeta();
+      if (!mounted) return;
 
-part 'chat_page_lifecycle.dart';
-part 'chat_page_message_helpers.dart';
-part 'chat_page_security_realtime.dart';
-part 'chat_page_composer.dart';
-part 'chat_page_widgets.dart';
+      if (_theirPublicKey != null && _theirPublicKey!.isNotEmpty) {
+        await _startSeal();
+      }
 
-class ChatPage extends StatefulWidget {
-  final String conversationId;
-  final Map<String, dynamic> otherUser;
+      await _loadMessages();
+      if (!mounted) return;
 
-  const ChatPage({
-    super.key,
-    required this.conversationId,
-    required this.otherUser,
-  });
+      await ChatService.markMessagesAsRead(widget.conversationId);
+      if (!mounted) return;
 
-  @override
-  State<ChatPage> createState() => _ChatPageState();
-}
+      _subscribeToMessages();
+      _startPollFallback();
+      _startExpireWatcher();
 
-class _ChatPageState extends State<ChatPage> {
-  final _controller = TextEditingController();
-  final _scrollController = ScrollController();
-  final _focusNode = FocusNode();
+      final uid = AuthService.currentUser?.id;
 
-  late final ChatScrollHelper _scrollHelper;
-  TypingService? _typingService;
-  VoiceRecorderService? _voiceRecorder;
+      if (uid != null) {
+        _typingService = TypingService(
+          conversationId: widget.conversationId,
+          myUserId: uid,
+          onPeerTypingChanged: (typing) {
+            if (!mounted) return;
 
-  List<Map<String, dynamic>> _messages = [];
-  bool _loading = true;
-  bool _sending = false;
-  bool _uploadingMedia = false;
-  bool _showEmojiPicker = false;
-  bool _hasText = false;
-  bool _peerTyping = false;
-  String? _error;
-  String? _theirPublicKey;
-  PendingAttachment? _pending;
-  ReplyTarget? _replyTo;
+            _safeSetState(() {
+              _peerTyping = typing;
+            });
+          },
+        )..start();
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Chat initialization failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
 
-  RealtimeChannel? _channel;
-  Timer? _sealTimer;
-  Timer? _pollTimer;
-  Timer? _expireTimer;
+      if (!mounted) return;
 
-  String _sealGlyph = 'Ⰰ';
-  DateTime? _conversationCreatedAt;
-  int? _disappearSeconds;
-
-  static const _disappearOptions = <(String, int?)>[
-    ('Изключено', null),
-    ('30 секунди', 30),
-    ('5 минути', 300),
-    ('1 час', 3600),
-    ('24 часа', 86400),
-    ('7 дни', 604800),
-  ];
-
-  String get _otherName =>
-      widget.otherUser['display_name'] ??
-      widget.otherUser['username'] ??
-      'Chat';
-
-  String? get _otherUserId =>
-      widget.otherUser['id'] as String? ??
-      widget.otherUser['other_user_id'] as String?;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollHelper = ChatScrollHelper(
-      controller: _scrollController,
-      onChanged: () {
-        if (mounted) setState(() {});
-      },
-    );
-    _voiceRecorder = VoiceRecorderService();
-    _focusNode.addListener(_onFocusChange);
-    _initChat();
-  }
-
-  void _onFocusChange() {
-    if (_focusNode.hasFocus && _showEmojiPicker) {
-      setState(() => _showEmojiPicker = false);
+      _safeSetState(() {
+        _error = 'Чатът не можа да бъде зареден. Опитай отново.';
+        _loading = false;
+      });
     }
   }
 
-  @override
-  void dispose() {
-    _focusNode.removeListener(_onFocusChange);
-    _focusNode.dispose();
-    _sealTimer?.cancel();
-    _pollTimer?.cancel();
-    _expireTimer?.cancel();
-    _channel?.unsubscribe();
-    _scrollHelper.dispose();
-    _typingService?.dispose();
-    _voiceRecorder?.dispose();
-    _controller.dispose();
-    _scrollController.dispose();
-    super.dispose();
+  Future<void> _refreshTheirPublicKey() async {
+    final otherId = _otherUserId;
+
+    if (otherId == null || otherId.isEmpty) {
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _theirPublicKey = widget.otherUser['public_key'] as String?;
+      });
+
+      return;
+    }
+
+    try {
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('public_key')
+          .eq('id', otherId)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _theirPublicKey =
+            row?['public_key'] as String? ??
+            widget.otherUser['public_key'] as String?;
+      });
+    } catch (e) {
+      debugPrint('Failed to refresh peer public key: $e');
+
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _theirPublicKey = widget.otherUser['public_key'] as String?;
+      });
+    }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final busy = _sending || _uploadingMedia;
-    final entries = buildChatListWithDates(_messages);
+  Future<void> _loadConversationMeta() async {
+    try {
+      final row = await Supabase.instance.client
+          .from('conversations')
+          .select('created_at, disappear_seconds')
+          .eq('id', widget.conversationId)
+          .maybeSingle();
 
-    return Scaffold(
-      backgroundColor: CriptivoColors.background,
-      appBar: ChatAppBar(
-        displayName: _otherName,
-        username: widget.otherUser['username'] as String?,
-        avatarUrl: widget.otherUser['avatar_url'] as String?,
-        sealGlyph: _sealGlyph,
-        peerTyping: _peerTyping,
-        encrypted: _theirPublicKey != null && _theirPublicKey!.isNotEmpty,
-        disappearSeconds: _disappearSeconds,
-        onSealLongPress: _showSafetyNumber,
-        onSafetyNumber: _showSafetyNumber,
-        onDisappear: _showDisappearSheet,
-        onRefresh: () async {
-          await _refreshTheirPublicKey();
-          await _updateSeal();
-          await _loadConversationMeta();
-          await _loadMessages();
-          await ChatService.markMessagesAsRead(widget.conversationId);
-        },
-        onOpenProfile: () {
-          ChatBackgroundPicker.show(
-            context,
-            onChanged: () {
-              if (mounted) setState(() {});
-            },
-          );
-        },
+      if (row == null) {
+        _conversationCreatedAt ??= DateTime.now().toUtc();
+
+        if (mounted) {
+          _safeSetState(() {
+            _disappearSeconds = null;
+          });
+        }
+
+        return;
+      }
+
+      final createdAt = row['created_at'];
+      final parsedCreatedAt = createdAt == null
+          ? DateTime.now().toUtc()
+          : DateTime.parse(createdAt.toString()).toUtc();
+
+      final rawSeconds = row['disappear_seconds'];
+      final seconds = rawSeconds is int
+          ? rawSeconds
+          : rawSeconds is num
+          ? rawSeconds.toInt()
+          : null;
+
+      _conversationCreatedAt = parsedCreatedAt;
+
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _disappearSeconds = seconds;
+      });
+    } catch (e) {
+      debugPrint('Conversation metadata load failed: $e');
+
+      _conversationCreatedAt ??= DateTime.now().toUtc();
+    }
+  }
+
+  void _startExpireWatcher() {
+    _expireTimer?.cancel();
+
+    _expireTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted || _messages.isEmpty) return;
+
+      final now = DateTime.now().toUtc();
+      final previousLength = _messages.length;
+
+      _messages.removeWhere((message) {
+        final expiresAt = message['expires_at'];
+
+        if (expiresAt == null) return false;
+
+        try {
+          final expiry = DateTime.parse(expiresAt.toString()).toUtc();
+
+          return !expiry.isAfter(now);
+        } catch (e) {
+          debugPrint('Invalid message expiry timestamp: $e');
+          return false;
+        }
+      });
+
+      if (_messages.length != previousLength && mounted) {
+        _safeSetState(() {});
+      }
+    });
+  }
+
+  Future<void> _showDisappearSheet() async {
+    if (!mounted) return;
+
+    _safeSetState(() {
+      _showEmojiPicker = false;
+    });
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CriptivoColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      body: Stack(
-        children: [
-          const Positioned.fill(child: ChatBackgroundLayer()),
-          Column(
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              if (_error != null)
-                MaterialBanner(
-                  content: Text(_error!),
-                  backgroundColor: CriptivoColors.surfaceLight,
-                  actions: [
-                    TextButton(
-                      onPressed: () => setState(() => _error = null),
-                      child: const Text('OK'),
-                    ),
-                  ],
-                ),
-              if (_disappearSeconds != null)
-                Material(
-                  color: CriptivoColors.surfaceLight.withValues(alpha: 0.9),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.timer_rounded,
-                          size: 16,
-                          color: CriptivoColors.neon,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Изчезващи съобщения: включени',
-                            style: TextStyle(
-                              color: CriptivoColors.textSecondary.withValues(
-                                alpha: 0.95,
-                              ),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Изчезващи съобщения',
+                  style: TextStyle(
+                    color: CriptivoColors.neon,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              Expanded(
-                child: Stack(
-                  children: [
-                    _loading
-                        ? const Center(
-                            child: CircularProgressIndicator(
-                              color: CriptivoColors.neon,
-                            ),
-                          )
-                        : _messages.isEmpty
-                        ? _buildEmptyState()
-                        : ListView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
-                            itemCount: entries.length,
-                            itemBuilder: (context, index) {
-                              final e = entries[index];
-                              return switch (e) {
-                                ChatDateSeparatorEntry(:final label) =>
-                                  ChatDateSeparator(label: label),
-                                ChatMessageEntry(:final message) =>
-                                  _buildMessageBubble(message),
-                              };
-                            },
-                          ),
-                    if (_scrollHelper.showButton)
-                      Positioned(
-                        right: 16,
-                        bottom: 12,
-                        child: ScrollToBottomButton(
-                          unreadCount: _scrollHelper.unreadWhileAway,
-                          onTap: () => _scrollHelper.scrollToBottom(),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Новите съобщения се изтриват след избраното време '
+                  'и за двамата участници.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: CriptivoColors.textSecondary,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (final option in _ChatPageState._disappearOptions)
+                ListTile(
+                  title: Text(
+                    option.$1,
+                    style: const TextStyle(color: CriptivoColors.textPrimary),
+                  ),
+                  trailing: _disappearSeconds == option.$2
+                      ? const Icon(
+                          Icons.check_rounded,
+                          color: CriptivoColors.neon,
+                        )
+                      : null,
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+
+                    try {
+                      await ChatService.setDisappearSeconds(
+                        conversationId: widget.conversationId,
+                        seconds: option.$2,
+                      );
+
+                      if (!mounted) return;
+
+                      _safeSetState(() {
+                        _disappearSeconds = option.$2;
+                      });
+                    } catch (e) {
+                      debugPrint('Failed to update disappearing messages: $e');
+
+                      if (!mounted) return;
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Неуспешна промяна на настройката.'),
                         ),
-                      ),
-                  ],
+                      );
+                    }
+                  },
                 ),
-              ),
-              TypingIndicator(name: _otherName, visible: _peerTyping),
-              if (_replyTo != null)
-                ReplyPreviewBar(
-                  target: _replyTo!,
-                  onClear: () => setState(() => _replyTo = null),
-                ),
-              ChatInputBar(
-                controller: _controller,
-                focusNode: _focusNode,
-                busy: busy,
-                showEmojiPicker: _showEmojiPicker,
-                hasText: _hasText || _replyTo != null,
-                pending: _pending,
-                recorder: _voiceRecorder,
-                onAttach: _showAttachSheet,
-                onToggleEmoji: _toggleEmojiPicker,
-                onSend: _sendOrPending,
-                onChanged: (v) {
-                  setState(() => _hasText = v.trim().isNotEmpty);
-                  _typingService?.onTextChanged(v);
-                },
-                onClearPending: () => setState(() => _pending = null),
-                onVoiceRecorded: _onVoiceRecorded,
-              ),
-              if (_showEmojiPicker)
-                ChatEmojiPanel(
-                  onEmojiSelected: _onEmojiSelected,
-                  onBackspace: _onEmojiBackspace,
-                ),
+              const SizedBox(height: 8),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  Future<void> _startSeal() async {
+    await _updateSeal();
+
+    if (!mounted) return;
+
+    _sealTimer?.cancel();
+
+    _sealTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) {
+        _updateSeal();
+      }
+    });
+  }
+
+  Future<void> _updateSeal() async {
+    final theirKey = _theirPublicKey;
+    final conversationCreatedAt = _conversationCreatedAt;
+
+    if (theirKey == null || theirKey.isEmpty || conversationCreatedAt == null) {
+      return;
+    }
+
+    try {
+      final sessionSecret = await MessageCrypto.sessionSecretBytes(
+        theirPublicKeyBase64: theirKey,
+      );
+
+      final seal = GlagoliticSeal(
+        sessionSecret: sessionSecret,
+        conversationId: widget.conversationId,
+      );
+
+      final glyph = await seal.currentGlyph(
+        conversationCreatedAt: conversationCreatedAt,
+      );
+
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _sealGlyph = glyph;
+      });
+    } catch (e) {
+      debugPrint('Glagolitic Seal update failed: $e');
+    }
   }
 }

@@ -17,12 +17,12 @@ class ChatBackgroundLayer extends StatelessWidget {
         Image.asset(
           asset,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) {
+          errorBuilder: (_, _, _) {
             // Ако light/dark файлът липсва → legacy
             return Image.asset(
               ChatBackgroundStyle.assetLegacy,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
+              errorBuilder: (_, _, _) =>
                   Container(color: CriptivoColors.background),
             );
           },

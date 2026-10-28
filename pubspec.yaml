@@ -65,7 +65,9 @@ flutter:
   assets:
     - assets/images/criptivo_logo.png
     - assets/images/chat_background.png
-
+    - assets/images/chat_background_dark.png
+    - assets/images/chat_background_light.png
+    
   fonts:
     - family: NotoSansGlagolitic
       fonts:

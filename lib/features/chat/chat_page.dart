@@ -173,13 +173,7 @@ class _ChatPageState extends State<ChatPage> {
         onSealLongPress: _showSafetyNumber,
         onSafetyNumber: _showSafetyNumber,
         onDisappear: _showDisappearSheet,
-        onRefresh: () async {
-          await _refreshTheirPublicKey();
-          await _updateSeal();
-          await _loadConversationMeta();
-          await _loadMessages();
-          await ChatService.markMessagesAsRead(widget.conversationId);
-        },
+        onRefresh: _initChat,
         onOpenProfile: () {
           ChatBackgroundPicker.show(
             context,
@@ -202,6 +196,10 @@ class _ChatPageState extends State<ChatPage> {
                     TextButton(
                       onPressed: () => setState(() => _error = null),
                       child: const Text('OK'),
+                    ),
+                    TextButton(
+                      onPressed: _initChat,
+                      child: const Text('Опитай отново'),
                     ),
                   ],
                 ),

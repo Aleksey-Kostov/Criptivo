@@ -3,13 +3,15 @@ part of 'chat_page.dart';
 extension _ChatPageLifecycle on _ChatPageState {
   Future<void> _initChat() async {
     try {
+      // Fail closed: the chat must not use a stale peer public key.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
       await _loadConversationMeta();
       if (!mounted) return;
 
-      if (_theirPublicKey != null && _theirPublicKey!.isNotEmpty) {
+      final theirKey = _theirPublicKey;
+      if (theirKey != null && theirKey.isNotEmpty) {
         await _startSeal();
       }
 
@@ -38,6 +40,13 @@ extension _ChatPageLifecycle on _ChatPageState {
           },
         )..start();
       }
+
+      if (!mounted) return;
+
+      _safeSetState(() {
+        _error = null;
+        _loading = false;
+      });
     } catch (e, stackTrace) {
       debugPrint('Chat initialization failed: $e');
       debugPrintStack(stackTrace: stackTrace);
@@ -45,7 +54,8 @@ extension _ChatPageLifecycle on _ChatPageState {
       if (!mounted) return;
 
       _safeSetState(() {
-        _error = 'Чатът не можа да бъде зареден. Опитай отново.';
+        _theirPublicKey = null;
+        _error = 'Чатът не можа да бъде зареден. Провери връзката и ключовете и опитай отново.';
         _loading = false;
       });
     }
@@ -54,14 +64,17 @@ extension _ChatPageLifecycle on _ChatPageState {
   Future<void> _refreshTheirPublicKey() async {
     final otherId = _otherUserId;
 
-    if (otherId == null || otherId.isEmpty) {
-      if (!mounted) return;
-
+    // Clear the old key first so it cannot be reused if refresh fails.
+    if (mounted) {
       _safeSetState(() {
-        _theirPublicKey = widget.otherUser['public_key'] as String?;
+        _theirPublicKey = null;
       });
+    }
 
-      return;
+    if (otherId == null || otherId.isEmpty) {
+      throw StateError(
+        'Cannot verify the peer public key: the peer user ID is missing.',
+      );
     }
 
     try {
@@ -73,19 +86,26 @@ extension _ChatPageLifecycle on _ChatPageState {
 
       if (!mounted) return;
 
+      final rawKey = row?['public_key'];
+      final publicKey = rawKey is String ? rawKey.trim() : '';
+
+      if (publicKey.isEmpty) {
+        throw StateError('The peer profile does not have a valid public key.');
+      }
+
       _safeSetState(() {
-        _theirPublicKey =
-            row?['public_key'] as String? ??
-            widget.otherUser['public_key'] as String?;
+        _theirPublicKey = publicKey;
       });
     } catch (e) {
       debugPrint('Failed to refresh peer public key: $e');
 
-      if (!mounted) return;
+      if (mounted) {
+        _safeSetState(() {
+          _theirPublicKey = null;
+        });
+      }
 
-      _safeSetState(() {
-        _theirPublicKey = widget.otherUser['public_key'] as String?;
-      });
+      rethrow;
     }
   }
 
@@ -130,7 +150,6 @@ extension _ChatPageLifecycle on _ChatPageState {
       });
     } catch (e) {
       debugPrint('Conversation metadata load failed: $e');
-
       _conversationCreatedAt ??= DateTime.now().toUtc();
     }
   }
@@ -151,7 +170,6 @@ extension _ChatPageLifecycle on _ChatPageState {
 
         try {
           final expiry = DateTime.parse(expiresAt.toString()).toUtc();
-
           return !expiry.isAfter(now);
         } catch (e) {
           debugPrint('Invalid message expiry timestamp: $e');
@@ -292,6 +310,13 @@ extension _ChatPageLifecycle on _ChatPageState {
       );
 
       if (!mounted) return;
+
+      // Do not display a result calculated with a key that changed
+      // while the asynchronous operation was running.
+      if (_theirPublicKey != theirKey ||
+          _conversationCreatedAt != conversationCreatedAt) {
+        return;
+      }
 
       _safeSetState(() {
         _sealGlyph = glyph;

@@ -26,7 +26,10 @@ Future<String?> showReactionPicker(BuildContext context) {
                       onTap: () => Navigator.pop(ctx, emoji),
                       child: Padding(
                         padding: const EdgeInsets.all(8),
-                        child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 28),
+                        ),
                       ),
                     ),
                 ],

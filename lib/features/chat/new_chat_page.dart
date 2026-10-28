@@ -29,7 +29,7 @@ class _NewChatPageState extends State<NewChatPage> {
         _loading = false;
       });
     } catch (e) {
-      print('Search error: $e');
+      debugPrint('Search error: $e');
       setState(() => _loading = false);
     }
   }
@@ -50,7 +50,7 @@ class _NewChatPageState extends State<NewChatPage> {
         ),
       );
     } catch (e) {
-      print('Start chat error: $e');
+      debugPrint('Start chat error: $e');
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Грешка: $e')));
     }

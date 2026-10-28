@@ -59,10 +59,7 @@ class TypingService {
     try {
       await _channel?.sendBroadcastMessage(
         event: 'typing',
-        payload: {
-          'user_id': myUserId,
-          'typing': typing,
-        },
+        payload: {'user_id': myUserId, 'typing': typing},
       );
     } catch (_) {}
   }

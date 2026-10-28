@@ -12,11 +12,7 @@ class ViewOnceTile extends StatefulWidget {
   final Map<String, dynamic> media;
   final String messageId;
 
-  const ViewOnceTile({
-    super.key,
-    required this.media,
-    required this.messageId,
-  });
+  const ViewOnceTile({super.key, required this.media, required this.messageId});
 
   @override
   State<ViewOnceTile> createState() => _ViewOnceTileState();
@@ -98,7 +94,10 @@ class _ViewOnceTileState extends State<ViewOnceTile> {
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.visibility_off_outlined, color: CriptivoColors.textSecondary),
+            Icon(
+              Icons.visibility_off_outlined,
+              color: CriptivoColors.textSecondary,
+            ),
             SizedBox(width: 8),
             Text(
               'Отворено',
@@ -140,7 +139,9 @@ class _ViewOnceTileState extends State<ViewOnceTile> {
         decoration: BoxDecoration(
           color: CriptivoColors.neon.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: CriptivoColors.neon.withValues(alpha: 0.35)),
+          border: Border.all(
+            color: CriptivoColors.neon.withValues(alpha: 0.35),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

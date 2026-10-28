@@ -89,11 +89,7 @@ class _ImageThumbState extends State<_ImageThumb> {
             backgroundColor: Colors.black,
             foregroundColor: Colors.white,
           ),
-          body: Center(
-            child: InteractiveViewer(
-              child: Image.memory(_bytes!),
-            ),
-          ),
+          body: Center(child: InteractiveViewer(child: Image.memory(_bytes!))),
         ),
       ),
     );
@@ -159,9 +155,8 @@ class _FileTileState extends State<_FileTile> {
       await OpenFilex.open(file.path);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Сваляне: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Сваляне: $e')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -184,9 +179,7 @@ class _FileTileState extends State<_FileTile> {
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.2),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: CriptivoColors.neon.withValues(alpha: 0.2),
-          ),
+          border: Border.all(color: CriptivoColors.neon.withValues(alpha: 0.2)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -207,7 +200,9 @@ class _FileTileState extends State<_FileTile> {
                     ),
                   ),
                   Text(
-                    _busy ? 'Отваряне…' : (sizeLabel.isEmpty ? 'Tap за отваряне' : sizeLabel),
+                    _busy
+                        ? 'Отваряне…'
+                        : (sizeLabel.isEmpty ? 'Tap за отваряне' : sizeLabel),
                     style: const TextStyle(
                       color: CriptivoColors.textSecondary,
                       fontSize: 12,
@@ -227,8 +222,11 @@ class _FileTileState extends State<_FileTile> {
                 ),
               )
             else
-              const Icon(Icons.download_rounded,
-                  color: CriptivoColors.textSecondary, size: 20),
+              const Icon(
+                Icons.download_rounded,
+                color: CriptivoColors.textSecondary,
+                size: 20,
+              ),
           ],
         ),
       ),

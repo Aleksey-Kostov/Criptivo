@@ -117,11 +117,7 @@ class MediaService {
   static Future<UploadedMedia?> pickAndUploadImage() async {
     final local = await pickImageLocal();
     if (local == null) return null;
-    return uploadBytes(
-      bytes: local.bytes,
-      name: local.name,
-      mime: local.mime,
-    );
+    return uploadBytes(bytes: local.bytes, name: local.name, mime: local.mime);
   }
 
   static Future<UploadedMedia?> captureAndUploadImage() async {
@@ -142,21 +138,13 @@ class MediaService {
   static Future<UploadedMedia?> pickAndUploadVideo() async {
     final local = await pickVideoLocal();
     if (local == null) return null;
-    return uploadBytes(
-      bytes: local.bytes,
-      name: local.name,
-      mime: local.mime,
-    );
+    return uploadBytes(bytes: local.bytes, name: local.name, mime: local.mime);
   }
 
   static Future<UploadedMedia?> pickAndUploadFile() async {
     final local = await pickFileLocal();
     if (local == null) return null;
-    return uploadBytes(
-      bytes: local.bytes,
-      name: local.name,
-      mime: local.mime,
-    );
+    return uploadBytes(bytes: local.bytes, name: local.name, mime: local.mime);
   }
 
   /// Вече избрани байтове → encrypt → Cloudinary.
@@ -262,11 +250,7 @@ class MediaService {
       ..fields['upload_preset'] = CloudinaryConfig.mediaUploadPreset
       ..fields['folder'] = 'criptivo/media'
       ..files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          ciphertext,
-          filename: filename,
-        ),
+        http.MultipartFile.fromBytes('file', ciphertext, filename: filename),
       );
 
     final streamed = await request.send();

@@ -42,10 +42,7 @@ class MediaCrypto {
     final keyBytes = _randomBytes(32);
     final secretKey = SecretKey(keyBytes);
 
-    final secretBox = await _aes.encrypt(
-      plainBytes,
-      secretKey: secretKey,
-    );
+    final secretBox = await _aes.encrypt(plainBytes, secretKey: secretKey);
 
     final combined = Uint8List.fromList([
       ...secretBox.cipherText,
@@ -77,10 +74,8 @@ class MediaCrypto {
     }
 
     final nonce = base64Decode(nonceBase64);
-    final cipherText =
-        ciphertextBytes.sublist(0, ciphertextBytes.length - 16);
-    final macBytes =
-        ciphertextBytes.sublist(ciphertextBytes.length - 16);
+    final cipherText = ciphertextBytes.sublist(0, ciphertextBytes.length - 16);
+    final macBytes = ciphertextBytes.sublist(ciphertextBytes.length - 16);
 
     try {
       final clear = await _aes.decrypt(

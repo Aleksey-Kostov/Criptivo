@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth/auth_service.dart';
@@ -43,10 +42,7 @@ class ProfileService {
         .maybeSingle();
 
     if (row == null) return null;
-    return filterForViewer(
-      Map<String, dynamic>.from(row),
-      viewerId: _myId,
-    );
+    return filterForViewer(Map<String, dynamic>.from(row), viewerId: _myId);
   }
 
   /// Маскира phone / email / bio според visibility.
@@ -78,7 +74,9 @@ class ProfileService {
 
     out['is_self'] = false;
 
-    final phoneVis = ProfileVisibility.fromDb(raw['phone_visibility'] as String?);
+    final phoneVis = ProfileVisibility.fromDb(
+      raw['phone_visibility'] as String?,
+    );
     if (phoneVis == ProfileVisibility.everyone) {
       out['phone'] = raw['phone'];
     }
@@ -90,7 +88,9 @@ class ProfileService {
 
     // Email никога не идва от profiles select тук без auth —
     // ако по-късно държите email в profiles, маскирайте:
-    final emailVis = ProfileVisibility.fromDb(raw['email_visibility'] as String?);
+    final emailVis = ProfileVisibility.fromDb(
+      raw['email_visibility'] as String?,
+    );
     if (emailVis == ProfileVisibility.everyone && raw['email'] != null) {
       out['email'] = raw['email'];
     }
@@ -104,20 +104,26 @@ class ProfileService {
     final trimmed = name.trim();
     if (trimmed.isEmpty) throw ArgumentError('Името е празно');
 
-    await _supabase.from('profiles').update({
-      'display_name': trimmed,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', id);
+    await _supabase
+        .from('profiles')
+        .update({
+          'display_name': trimmed,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', id);
   }
 
   static Future<void> updateBio(String? bio) async {
     final id = _myId;
     if (id == null) throw Exception('Не си влязъл');
     final text = bio?.trim();
-    await _supabase.from('profiles').update({
-      'bio': (text == null || text.isEmpty) ? null : text,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', id);
+    await _supabase
+        .from('profiles')
+        .update({
+          'bio': (text == null || text.isEmpty) ? null : text,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', id);
   }
 
   /// [phone] в E.164 (+359...) или null за изтриване.
@@ -140,12 +146,15 @@ class ProfileService {
     // searchable само ако има номер
     final canSearch = normalized != null && searchable;
 
-    await _supabase.from('profiles').update({
-      'phone': normalized,
-      'phone_visibility': visibility.db,
-      'phone_searchable': canSearch,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', id);
+    await _supabase
+        .from('profiles')
+        .update({
+          'phone': normalized,
+          'phone_visibility': visibility.db,
+          'phone_searchable': canSearch,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', id);
   }
 
   static Future<void> updatePrivacy({

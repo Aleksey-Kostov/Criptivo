@@ -21,11 +21,7 @@ class ViewOnce {
     Map<String, dynamic> envelope, {
     int seconds = 5,
   }) {
-    return {
-      ...envelope,
-      metaKey: true,
-      secondsKey: seconds,
-    };
+    return {...envelope, metaKey: true, secondsKey: seconds};
   }
 
   static String markEnvelopeJson(String envelopeJson, {int seconds = 5}) {

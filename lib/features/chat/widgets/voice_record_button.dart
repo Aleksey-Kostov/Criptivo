@@ -155,9 +155,7 @@ class VoiceRecordButtonState extends State<VoiceRecordButton>
     // Само mic бутонът. Записният strip е в ChatInputBar.
     return Listener(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: widget.enabled && !_recording
-          ? (_) => begin()
-          : null,
+      onPointerDown: widget.enabled && !_recording ? (_) => begin() : null,
       onPointerMove: _recording && !_locked
           ? (e) {
               // локално отместване от центъра на бутона
@@ -175,9 +173,7 @@ class VoiceRecordButtonState extends State<VoiceRecordButton>
       child: AnimatedBuilder(
         animation: _pulse,
         builder: (context, child) {
-          final scale = _recording
-              ? 1.15 + (_pulse.value * 0.12)
-              : 1.0;
+          final scale = _recording ? 1.15 + (_pulse.value * 0.12) : 1.0;
           final glow = _recording ? 0.35 + (_pulse.value * 0.35) : 0.0;
           return Transform.scale(
             scale: scale,
@@ -189,8 +185,8 @@ class VoiceRecordButtonState extends State<VoiceRecordButton>
                 shape: BoxShape.circle,
                 color: _recording
                     ? (_willCancel
-                        ? CriptivoColors.error.withValues(alpha: 0.2)
-                        : CriptivoColors.neon.withValues(alpha: 0.18))
+                          ? CriptivoColors.error.withValues(alpha: 0.2)
+                          : CriptivoColors.neon.withValues(alpha: 0.18))
                     : Colors.transparent,
                 boxShadow: _recording && !_willCancel
                     ? [
@@ -207,8 +203,8 @@ class VoiceRecordButtonState extends State<VoiceRecordButton>
                 color: !widget.enabled
                     ? CriptivoColors.textSecondary
                     : _willCancel
-                        ? CriptivoColors.error
-                        : CriptivoColors.neon,
+                    ? CriptivoColors.error
+                    : CriptivoColors.neon,
                 size: 26,
               ),
             ),
@@ -282,8 +278,8 @@ class VoiceRecordingStrip extends StatelessWidget {
               locked
                   ? 'Заключено — натисни изпрати'
                   : cancel
-                      ? 'Пусни за отмяна'
-                      : '↑ заключи   ·   ← отмени   ·   пусни = изпрати',
+                  ? 'Пусни за отмяна'
+                  : '↑ заключи   ·   ← отмени   ·   пусни = изпрати',
               style: TextStyle(
                 color: CriptivoColors.textSecondary.withValues(alpha: 0.95),
                 fontSize: 12,
@@ -301,7 +297,11 @@ class VoiceRecordingStrip extends StatelessWidget {
                 child: const SizedBox(
                   width: 44,
                   height: 44,
-                  child: Icon(Icons.send_rounded, color: Colors.black, size: 20),
+                  child: Icon(
+                    Icons.send_rounded,
+                    color: Colors.black,
+                    size: 20,
+                  ),
                 ),
               ),
             )

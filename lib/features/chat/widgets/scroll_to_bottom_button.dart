@@ -40,12 +40,18 @@ class ScrollToBottomButton extends StatelessWidget {
                   top: 2,
                   right: 2,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: CriptivoColors.neon,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    constraints: const BoxConstraints(minWidth: 18, minHeight: 16),
+                    constraints: const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 16,
+                    ),
                     child: Text(
                       unreadCount > 9 ? '9+' : '$unreadCount',
                       textAlign: TextAlign.center,

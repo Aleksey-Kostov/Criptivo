@@ -62,8 +62,9 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final initial =
-        displayName.isNotEmpty ? displayName.characters.first.toUpperCase() : '?';
+    final initial = displayName.isNotEmpty
+        ? displayName.characters.first.toUpperCase()
+        : '?';
     final hasAvatar = avatarUrl != null && avatarUrl!.isNotEmpty;
 
     return AppBar(
@@ -129,8 +130,9 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                                 alpha: 0.95,
                               ),
                         fontSize: 12,
-                        fontWeight:
-                            peerTyping ? FontWeight.w500 : FontWeight.w400,
+                        fontWeight: peerTyping
+                            ? FontWeight.w500
+                            : FontWeight.w400,
                       ),
                     ),
                   ],
@@ -143,14 +145,16 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       actions: [
         IconButton(
           tooltip: 'Обаждане',
-          onPressed: onVoiceCall ??
+          onPressed:
+              onVoiceCall ??
               () => _soon(context, 'Гласовите обаждания идват скоро'),
           icon: const Icon(Icons.call_rounded, size: 22),
           color: CriptivoColors.neon,
         ),
         IconButton(
           tooltip: 'Видео',
-          onPressed: onVideoCall ??
+          onPressed:
+              onVideoCall ??
               () => _soon(context, 'Видео обажданията идват скоро'),
           icon: const Icon(Icons.videocam_rounded, size: 24),
           color: CriptivoColors.neon,
@@ -195,8 +199,11 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
               value: _ChatMenuAction.safety,
               child: Row(
                 children: [
-                  Icon(Icons.verified_user_outlined,
-                      color: CriptivoColors.neon, size: 20),
+                  Icon(
+                    Icons.verified_user_outlined,
+                    color: CriptivoColors.neon,
+                    size: 20,
+                  ),
                   SizedBox(width: 10),
                   Text(
                     'Safety Number',
@@ -209,8 +216,11 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
               value: _ChatMenuAction.refresh,
               child: Row(
                 children: [
-                  Icon(Icons.refresh_rounded,
-                      color: CriptivoColors.neon, size: 20),
+                  Icon(
+                    Icons.refresh_rounded,
+                    color: CriptivoColors.neon,
+                    size: 20,
+                  ),
                   SizedBox(width: 10),
                   Text(
                     'Обнови',
@@ -228,10 +238,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   static void _soon(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
   }
 }

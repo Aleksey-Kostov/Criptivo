@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:http/http.dart' as http;
 
 class LinkPreviewData {
@@ -47,21 +45,22 @@ class LinkPreviewService {
       final body = res.body;
       String? og(String prop) {
         final re = RegExp(
-          'property=[\"\']og:$prop[\"\'][^>]*content=[\"\']([^\"\']+)[\"\']',
+          r"""property=["']og:$prop["'][^>]*content=["']([^"']+)["']""",
           caseSensitive: false,
         );
         final re2 = RegExp(
-          'content=[\"\']([^\"\']+)[\"\'][^>]*property=[\"\']og:$prop[\"\']',
+          r"""content=["']([^"']+)["'][^>]*property=["']og:$prop["']""",
           caseSensitive: false,
         );
         return re.firstMatch(body)?.group(1) ?? re2.firstMatch(body)?.group(1);
       }
 
-      final title = og('title') ??
-          RegExp(r'<title[^>]*>([^<]+)</title>', caseSensitive: false)
-              .firstMatch(body)
-              ?.group(1)
-              ?.trim();
+      final title =
+          og('title') ??
+          RegExp(
+            r'<title[^>]*>([^<]+)</title>',
+            caseSensitive: false,
+          ).firstMatch(body)?.group(1)?.trim();
 
       final data = LinkPreviewData(
         url: url,

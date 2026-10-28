@@ -29,16 +29,10 @@ class AvatarService {
     if (kIsWeb) {
       final bytes = await file.readAsBytes();
       request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: file.name,
-        ),
+        http.MultipartFile.fromBytes('file', bytes, filename: file.name),
       );
     } else {
-      request.files.add(
-        await http.MultipartFile.fromPath('file', file.path),
-      );
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
     }
 
     final streamed = await request.send();

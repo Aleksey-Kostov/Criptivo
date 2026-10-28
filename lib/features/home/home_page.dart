@@ -61,10 +61,13 @@ class _HomePageState extends State<HomePage> {
       final local = await KeyManager.getPublicKeyBase64();
       if (local == null) return;
 
-      await Supabase.instance.client.from('profiles').update({
-        'public_key': local,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', user.id);
+      await Supabase.instance.client
+          .from('profiles')
+          .update({
+            'public_key': local,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', user.id);
     } catch (e) {
       debugPrint('Key sync failed: $e');
     }
@@ -109,8 +112,8 @@ class _HomePageState extends State<HomePage> {
       final name = (other?['display_name'] as String? ?? '').toLowerCase();
       final username = (other?['username'] as String? ?? '').toLowerCase();
       final convId = item['conversation_id'] as String? ?? '';
-      final preview =
-          (ConversationPreviewStore.get(convId)?.preview ?? '').toLowerCase();
+      final preview = (ConversationPreviewStore.get(convId)?.preview ?? '')
+          .toLowerCase();
       return name.contains(q) || username.contains(q) || preview.contains(q);
     }).toList();
   }
@@ -191,11 +194,12 @@ class _HomePageState extends State<HomePage> {
 
               _notifiedReactionIds.add(reactionId);
 
-              final conv =
-                  _conversations.cast<Map<String, dynamic>?>().firstWhere(
-                        (c) => c?['conversation_id'] == conversationId,
-                        orElse: () => null,
-                      );
+              final conv = _conversations
+                  .cast<Map<String, dynamic>?>()
+                  .firstWhere(
+                    (c) => c?['conversation_id'] == conversationId,
+                    orElse: () => null,
+                  );
 
               final other = conv?['other_user'] as Map<String, dynamic>?;
               final name =
@@ -248,9 +252,9 @@ class _HomePageState extends State<HomePage> {
     });
 
     final conv = _conversations.cast<Map<String, dynamic>?>().firstWhere(
-          (c) => c?['conversation_id'] == conversationId,
-          orElse: () => null,
-        );
+      (c) => c?['conversation_id'] == conversationId,
+      orElse: () => null,
+    );
 
     final other = conv?['other_user'] as Map<String, dynamic>?;
     final name = other?['display_name'] ?? other?['username'] ?? 'Някой';
@@ -339,7 +343,10 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _openPublicProfile(Map<String, dynamic>? other, String name) async {
+  Future<void> _openPublicProfile(
+    Map<String, dynamic>? other,
+    String name,
+  ) async {
     final id = other?['id'] as String?;
     if (id == null) return;
     await PublicProfileSheet.show(
@@ -365,9 +372,9 @@ class _HomePageState extends State<HomePage> {
           if (id == _activeConversationId) continue;
 
           final old = _conversations.cast<Map<String, dynamic>?>().firstWhere(
-                (c) => c?['conversation_id'] == id,
-                orElse: () => null,
-              );
+            (c) => c?['conversation_id'] == id,
+            orElse: () => null,
+          );
 
           final newAt = item['last_message_at'] as String?;
           final oldAt = old?['last_message_at'] as String?;
@@ -509,7 +516,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  String _subtitleFor(String conversationId, bool isUnread, Map<String, dynamic>? other) {
+  String _subtitleFor(
+    String conversationId,
+    bool isUnread,
+    Map<String, dynamic>? other,
+  ) {
     final preview = ConversationPreviewStore.get(conversationId);
     if (preview != null && preview.preview.isNotEmpty) {
       return preview.preview;
@@ -558,116 +569,114 @@ class _HomePageState extends State<HomePage> {
                   child: _conversations.isEmpty
                       ? _buildEmptyState(isSearch: false)
                       : filtered.isEmpty
-                          ? _buildEmptyState(isSearch: true)
-                          : RefreshIndicator(
-                              color: CriptivoColors.neon,
-                              onRefresh: () => _loadConversations(),
-                              child: ListView.builder(
-                                itemCount: filtered.length,
-                                itemBuilder: (context, index) {
-                                  final item = filtered[index];
-                                  final conversationId =
-                                      item['conversation_id'] as String? ?? '';
-                                  final other = item['other_user']
-                                      as Map<String, dynamic>?;
-                                  final name = other?['display_name'] ??
-                                      other?['username'] ??
-                                      'Unknown';
-                                  final isUnread =
-                                      _unread.contains(conversationId);
-                                  final lastAt =
-                                      _formatLastAt(item['last_message_at']);
-                                  final subtitle = _subtitleFor(
-                                    conversationId,
-                                    isUnread,
-                                    other,
-                                  );
+                      ? _buildEmptyState(isSearch: true)
+                      : RefreshIndicator(
+                          color: CriptivoColors.neon,
+                          onRefresh: () => _loadConversations(),
+                          child: ListView.builder(
+                            itemCount: filtered.length,
+                            itemBuilder: (context, index) {
+                              final item = filtered[index];
+                              final conversationId =
+                                  item['conversation_id'] as String? ?? '';
+                              final other =
+                                  item['other_user'] as Map<String, dynamic>?;
+                              final name =
+                                  other?['display_name'] ??
+                                  other?['username'] ??
+                                  'Unknown';
+                              final isUnread = _unread.contains(conversationId);
+                              final lastAt = _formatLastAt(
+                                item['last_message_at'],
+                              );
+                              final subtitle = _subtitleFor(
+                                conversationId,
+                                isUnread,
+                                other,
+                              );
 
-                                  return ListTile(
-                                    leading: Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        GestureDetector(
-                                          onTap: () =>
-                                              _openPublicProfile(other, name),
-                                          child: _buildAvatar(other, name),
+                              return ListTile(
+                                leading: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () =>
+                                          _openPublicProfile(other, name),
+                                      child: _buildAvatar(other, name),
+                                    ),
+                                    if (isUnread)
+                                      Positioned(
+                                        right: -2,
+                                        top: -2,
+                                        child: Container(
+                                          width: 12,
+                                          height: 12,
+                                          decoration: const BoxDecoration(
+                                            color: CriptivoColors.neon,
+                                            shape: BoxShape.circle,
+                                          ),
                                         ),
-                                        if (isUnread)
-                                          Positioned(
-                                            right: -2,
-                                            top: -2,
-                                            child: Container(
-                                              width: 12,
-                                              height: 12,
-                                              decoration: const BoxDecoration(
-                                                color: CriptivoColors.neon,
-                                                shape: BoxShape.circle,
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    title: Text(
-                                      name,
-                                      style: TextStyle(
-                                        color: CriptivoColors.textPrimary,
-                                        fontWeight: isUnread
-                                            ? FontWeight.w700
-                                            : FontWeight.w500,
                                       ),
-                                    ),
-                                    subtitle: Text(
-                                      subtitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: isUnread
-                                            ? CriptivoColors.neon
-                                            : CriptivoColors.textSecondary,
-                                        fontWeight: isUnread
-                                            ? FontWeight.w600
-                                            : FontWeight.normal,
-                                        fontSize: 13,
+                                  ],
+                                ),
+                                title: Text(
+                                  name,
+                                  style: TextStyle(
+                                    color: CriptivoColors.textPrimary,
+                                    fontWeight: isUnread
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: isUnread
+                                        ? CriptivoColors.neon
+                                        : CriptivoColors.textSecondary,
+                                    fontWeight: isUnread
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    if (lastAt.isNotEmpty)
+                                      Text(
+                                        lastAt,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: isUnread
+                                              ? CriptivoColors.neon
+                                              : CriptivoColors.textSecondary,
+                                          fontWeight: isUnread
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                        ),
                                       ),
-                                    ),
-                                    trailing: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.end,
-                                      children: [
-                                        if (lastAt.isNotEmpty)
-                                          Text(
-                                            lastAt,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: isUnread
-                                                  ? CriptivoColors.neon
-                                                  : CriptivoColors
-                                                      .textSecondary,
-                                              fontWeight: isUnread
-                                                  ? FontWeight.w600
-                                                  : FontWeight.normal,
-                                            ),
-                                          ),
-                                        if (isUnread) ...[
-                                          const SizedBox(height: 6),
-                                          Container(
-                                            width: 10,
-                                            height: 10,
-                                            decoration: const BoxDecoration(
-                                              color: CriptivoColors.neon,
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    onTap: () => _openChat(item),
-                                  );
-                                },
-                              ),
-                            ),
+                                    if (isUnread) ...[
+                                      const SizedBox(height: 6),
+                                      Container(
+                                        width: 10,
+                                        height: 10,
+                                        decoration: const BoxDecoration(
+                                          color: CriptivoColors.neon,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                onTap: () => _openChat(item),
+                              );
+                            },
+                          ),
+                        ),
                 ),
               ],
             ),

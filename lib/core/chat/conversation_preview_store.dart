@@ -20,12 +20,12 @@ class ConversationPreview {
   });
 
   Map<String, dynamic> toJson() => {
-        'conversation_id': conversationId,
-        'preview': preview,
-        'is_me': isMe,
-        'at': at?.toUtc().toIso8601String(),
-        'message_id': messageId,
-      };
+    'conversation_id': conversationId,
+    'preview': preview,
+    'is_me': isMe,
+    'at': at?.toUtc().toIso8601String(),
+    'message_id': messageId,
+  };
 
   factory ConversationPreview.fromJson(Map<String, dynamic> j) {
     DateTime? at;
@@ -63,9 +63,7 @@ class ConversationPreviewStore {
         _cache = map.map((k, v) {
           return MapEntry(
             k,
-            ConversationPreview.fromJson(
-              Map<String, dynamic>.from(v as Map),
-            ),
+            ConversationPreview.fromJson(Map<String, dynamic>.from(v as Map)),
           );
         });
       }
@@ -84,8 +82,7 @@ class ConversationPreviewStore {
   static ConversationPreview? get(String conversationId) =>
       _cache[conversationId];
 
-  static Map<String, ConversationPreview> get all =>
-      Map.unmodifiable(_cache);
+  static Map<String, ConversationPreview> get all => Map.unmodifiable(_cache);
 
   /// Запис след send / receive / decrypt в чата.
   static Future<void> save({

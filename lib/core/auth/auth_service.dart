@@ -71,11 +71,14 @@ class AuthService {
 
     final user = response.user;
     if (user != null) {
-      await _supabase.from('profiles').update({
-        'public_key': publicKey,
-        'username': normalizedUsername,
-        'display_name': displayName ?? normalizedUsername,
-      }).eq('id', user.id);
+      await _supabase
+          .from('profiles')
+          .update({
+            'public_key': publicKey,
+            'username': normalizedUsername,
+            'display_name': displayName ?? normalizedUsername,
+          })
+          .eq('id', user.id);
     }
 
     lastKeySyncStatus = KeySyncStatus.ok;

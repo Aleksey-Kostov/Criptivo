@@ -57,9 +57,7 @@ class ReactionService {
   }
 
   /// Агрегира сурови редове → [{emoji, count, mine}]
-  static List<Map<String, dynamic>> aggregate(
-    List<Map<String, dynamic>> rows,
-  ) {
+  static List<Map<String, dynamic>> aggregate(List<Map<String, dynamic>> rows) {
     final myId = _myId;
     final byEmoji = <String, List<Map<String, dynamic>>>{};
     for (final r in rows) {
@@ -67,13 +65,9 @@ class ReactionService {
       byEmoji.putIfAbsent(e, () => []).add(r);
     }
     return byEmoji.entries.map((e) {
-      final mine = e.value.any((r) => r['user_id'] == myId);
-      return {
-        'emoji': e.key,
-        'count': e.value.length,
-        'mine': mine,
-      };
-    }).toList()
+        final mine = e.value.any((r) => r['user_id'] == myId);
+        return {'emoji': e.key, 'count': e.value.length, 'mine': mine};
+      }).toList()
       ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
   }
 }

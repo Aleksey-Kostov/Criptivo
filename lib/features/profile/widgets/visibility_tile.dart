@@ -25,9 +25,7 @@ class VisibilityTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: CriptivoColors.surfaceLight,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: CriptivoColors.neon.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: CriptivoColors.neon.withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

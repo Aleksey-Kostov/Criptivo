@@ -74,10 +74,16 @@ class ChatBackgroundPicker {
     final selected = ChatBackgroundStyle.mode == mode;
     return ListTile(
       leading: Icon(icon, color: CriptivoColors.neon),
-      title: Text(title, style: const TextStyle(color: CriptivoColors.textPrimary)),
+      title: Text(
+        title,
+        style: const TextStyle(color: CriptivoColors.textPrimary),
+      ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(color: CriptivoColors.textSecondary, fontSize: 12),
+        style: const TextStyle(
+          color: CriptivoColors.textSecondary,
+          fontSize: 12,
+        ),
       ),
       trailing: selected
           ? const Icon(Icons.check_circle_rounded, color: CriptivoColors.neon)

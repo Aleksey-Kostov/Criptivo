@@ -96,8 +96,9 @@ class VoiceRecorderService {
 
     if (!await file.exists()) return null;
 
-    final durationMs =
-        started != null ? DateTime.now().difference(started).inMilliseconds : 0;
+    final durationMs = started != null
+        ? DateTime.now().difference(started).inMilliseconds
+        : 0;
     // Твърде кратко = случайно тапване
     if (durationMs < 400) {
       await file.delete();

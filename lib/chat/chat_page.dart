@@ -12,13 +12,10 @@ class ChatPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name =
-        otherUser['display_name'] ?? otherUser['username'] ?? 'Chat';
+    final name = otherUser['display_name'] ?? otherUser['username'] ?? 'Chat';
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(name),
-      ),
+      appBar: AppBar(title: Text(name)),
       body: Center(
         child: Text(
           'Чат с $name\n\nConversation ID:\n$conversationId\n\nСледва: криптирани съобщения',

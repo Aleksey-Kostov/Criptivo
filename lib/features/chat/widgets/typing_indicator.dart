@@ -6,11 +6,7 @@ class TypingIndicator extends StatelessWidget {
   final String name;
   final bool visible;
 
-  const TypingIndicator({
-    super.key,
-    required this.name,
-    required this.visible,
-  });
+  const TypingIndicator({super.key, required this.name, required this.visible});
 
   @override
   Widget build(BuildContext context) {

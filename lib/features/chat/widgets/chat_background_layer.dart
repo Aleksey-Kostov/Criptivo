@@ -22,9 +22,8 @@ class ChatBackgroundLayer extends StatelessWidget {
             return Image.asset(
               ChatBackgroundStyle.assetLegacy,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: CriptivoColors.background,
-              ),
+              errorBuilder: (_, __, ___) =>
+                  Container(color: CriptivoColors.background),
             );
           },
         ),

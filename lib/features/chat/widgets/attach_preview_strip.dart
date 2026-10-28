@@ -47,9 +47,7 @@ class AttachPreviewStrip extends StatelessWidget {
       decoration: BoxDecoration(
         color: CriptivoColors.surfaceLight,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: CriptivoColors.neon.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: CriptivoColors.neon.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -72,15 +70,12 @@ class AttachPreviewStrip extends StatelessWidget {
                 color: CriptivoColors.surface,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(
-                switch (attachment.kind) {
-                  'video' => Icons.videocam_outlined,
-                  'audio' => Icons.mic_none_rounded,
-                  'image' => Icons.image_outlined,
-                  _ => Icons.insert_drive_file_outlined,
-                },
-                color: CriptivoColors.neon,
-              ),
+              child: Icon(switch (attachment.kind) {
+                'video' => Icons.videocam_outlined,
+                'audio' => Icons.mic_none_rounded,
+                'image' => Icons.image_outlined,
+                _ => Icons.insert_drive_file_outlined,
+              }, color: CriptivoColors.neon),
             ),
           const SizedBox(width: 10),
           Expanded(

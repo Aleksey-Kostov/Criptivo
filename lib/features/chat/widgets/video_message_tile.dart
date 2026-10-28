@@ -14,11 +14,7 @@ class VideoMessageTile extends StatefulWidget {
   final Map<String, dynamic> media; // envelope map: url, key, nonce, name, ...
   final double width;
 
-  const VideoMessageTile({
-    super.key,
-    required this.media,
-    this.width = 240,
-  });
+  const VideoMessageTile({super.key, required this.media, this.width = 240});
 
   @override
   State<VideoMessageTile> createState() => _VideoMessageTileState();
@@ -182,7 +178,9 @@ class _VideoMessageTileState extends State<VideoMessageTile> {
                     padding: const EdgeInsets.all(12),
                     child: Text(
                       _error ?? '🎬',
-                      style: const TextStyle(color: CriptivoColors.textSecondary),
+                      style: const TextStyle(
+                        color: CriptivoColors.textSecondary,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -225,10 +223,7 @@ class _VideoMessageTileState extends State<VideoMessageTile> {
                     bottom: 8,
                     child: Text(
                       'Preview · muted',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
                     ),
                   ),
               ],

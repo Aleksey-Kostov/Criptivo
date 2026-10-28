@@ -5,13 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/storage/media_local_cache.dart';
 import '../../../core/theme/criptivo_theme.dart';
 
-enum MessageAction {
-  reply,
-  copy,
-  share,
-  download,
-  viewOnceInfo,
-}
+enum MessageAction { reply, copy, share, download, viewOnceInfo }
 
 /// Bottom sheet: Reply · Copy · Share · Download (ако има media).
 class MessageActionsSheet extends StatelessWidget {
@@ -119,7 +113,10 @@ class MessageActionsSheet extends StatelessWidget {
   }) {
     return ListTile(
       leading: Icon(icon, color: CriptivoColors.neon),
-      title: Text(label, style: const TextStyle(color: CriptivoColors.textPrimary)),
+      title: Text(
+        label,
+        style: const TextStyle(color: CriptivoColors.textPrimary),
+      ),
       onTap: onTap,
     );
   }

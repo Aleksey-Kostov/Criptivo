@@ -16,20 +16,23 @@ Future<void> main() async {
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
-    anonKey: SupabaseConfig.anonKey,
+    publishableKey: SupabaseConfig.anonKey,
   );
-
-  // Генерира ключове само ако липсват локално — никога не ги презаписва.
+  // Генерира ключове само ако липсват локално.
   await KeyManager.ensureKeys();
 
-  // Зарежда избор ден/нощ фон за чата.
+  // Зарежда избрания фон за чата.
   await ChatBackgroundStyle.load();
 
   runApp(const CriptivoApp());
 }
 
 class CriptivoApp extends StatelessWidget {
-  const CriptivoApp({super.key});
+  const CriptivoApp({super.key, this.home});
+
+  /// Позволява на тестовете да подадат собствен начален екран,
+  /// без да е необходимо да се инициализира Supabase.
+  final Widget? home;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +40,7 @@ class CriptivoApp extends StatelessWidget {
       title: 'Criptivo',
       debugShowCheckedModeBanner: false,
       theme: CriptivoTheme.dark,
-      home: const AuthGate(),
+      home: home ?? const AuthGate(),
     );
   }
 }
@@ -62,17 +65,19 @@ class _AuthGateState extends State<AuthGate> {
         final userId = session?.user.id;
 
         if (session != null && userId != null) {
-          // Sync public key веднъж на потребител (не при всеки rebuild).
+          // Синхронизира публичния ключ веднъж за всеки потребител.
           if (!_synced || _syncedUserId != userId) {
             _synced = true;
             _syncedUserId = userId;
             unawaited(AuthService.syncPublicKeyToProfile());
           }
+
           return const HomePage();
         }
 
         _synced = false;
         _syncedUserId = null;
+
         return const LoginPage();
       },
     );

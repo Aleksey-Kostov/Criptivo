@@ -71,9 +71,7 @@ class _LinkPreviewCardState extends State<LinkPreviewCard> {
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.25),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: CriptivoColors.neon.withValues(alpha: 0.2),
-          ),
+          border: Border.all(color: CriptivoColors.neon.withValues(alpha: 0.2)),
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(

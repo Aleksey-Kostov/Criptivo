@@ -161,7 +161,7 @@ class _LoginPageState extends State<LoginPage> {
                       'assets/images/criptivo_logo.png',
                       height: 140,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) {
+                      errorBuilder: (_, _, _) {
                         return const Text(
                           'CRIPTIVO',
                           style: TextStyle(
@@ -202,9 +202,7 @@ class _LoginPageState extends State<LoginPage> {
 
                     TextFormField(
                       controller: _emailController,
-                      style: const TextStyle(
-                        color: CriptivoColors.textPrimary,
-                      ),
+                      style: const TextStyle(color: CriptivoColors.textPrimary),
                       decoration: const InputDecoration(
                         labelText: 'Email',
                         prefixIcon: Icon(Icons.email_outlined),
@@ -219,9 +217,7 @@ class _LoginPageState extends State<LoginPage> {
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
-                      style: const TextStyle(
-                        color: CriptivoColors.textPrimary,
-                      ),
+                      style: const TextStyle(color: CriptivoColors.textPrimary),
                       decoration: InputDecoration(
                         labelText: 'Password',
                         prefixIcon: const Icon(Icons.lock_outline),
@@ -255,9 +251,7 @@ class _LoginPageState extends State<LoginPage> {
                             )
                           : ElevatedButton(
                               onPressed: _submit,
-                              child: Text(
-                                _isSignUp ? 'Регистрация' : 'Вход',
-                              ),
+                              child: Text(_isSignUp ? 'Регистрация' : 'Вход'),
                             ),
                     ),
                     const SizedBox(height: 12),

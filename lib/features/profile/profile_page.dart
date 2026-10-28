@@ -56,10 +56,8 @@ class _ProfilePageState extends State<ProfilePage> {
         _bioController.text = p?['bio'] as String? ?? '';
         _phoneController.text = p?['phone'] as String? ?? '';
         _emailController.text = p?['email'] as String? ?? '';
-        _phoneVis =
-            ProfileVisibility.fromDb(p?['phone_visibility'] as String?);
-        _emailVis =
-            ProfileVisibility.fromDb(p?['email_visibility'] as String?);
+        _phoneVis = ProfileVisibility.fromDb(p?['phone_visibility'] as String?);
+        _emailVis = ProfileVisibility.fromDb(p?['email_visibility'] as String?);
         _bioVis = ProfileVisibility.fromDb(p?['bio_visibility'] as String?);
         _phoneSearchable = p?['phone_searchable'] == true;
         _loading = false;
@@ -67,9 +65,8 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Грешка: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Грешка: $e')));
     }
   }
 
@@ -81,14 +78,12 @@ class _ProfilePageState extends State<ProfilePage> {
       final url = await AvatarService.updateMyAvatar(file);
       if (!mounted) return;
       setState(() => _profile = {...?_profile, 'avatar_url': url});
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Снимката е обновена')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Снимката е обновена')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Качване: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Качване: $e')));
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
@@ -114,14 +109,11 @@ class _ProfilePageState extends State<ProfilePage> {
       );
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Профилът е запазен')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Профилът е запазен')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$e')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -131,9 +123,8 @@ class _ProfilePageState extends State<ProfilePage> {
     final next = _emailController.text.trim().toLowerCase();
     final current = (_profile?['email'] as String?)?.toLowerCase() ?? '';
     if (next.isEmpty || next == current) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Въведи нов email')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Въведи нов email')));
       return;
     }
     setState(() => _saving = true);
@@ -151,14 +142,11 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     } on AuthException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$e')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -211,8 +199,9 @@ class _ProfilePageState extends State<ProfilePage> {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color:
-                                  CriptivoColors.neon.withValues(alpha: 0.12),
+                              color: CriptivoColors.neon.withValues(
+                                alpha: 0.12,
+                              ),
                               blurRadius: 20,
                             ),
                           ],
@@ -333,7 +322,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
-                  activeColor: CriptivoColors.neon,
+                  activeThumbColor: CriptivoColors.neon,
                   title: const Text(
                     'Намерим по телефон',
                     style: TextStyle(color: CriptivoColors.textPrimary),

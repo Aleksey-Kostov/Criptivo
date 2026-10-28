@@ -134,9 +134,7 @@ List<ChatListEntry> buildChatListWithDates(
 
     if (key != lastKey) {
       lastKey = key;
-      final label = dt != null
-          ? ChatDateLabels.labelForBg(dt, now: now)
-          : '—';
+      final label = dt != null ? ChatDateLabels.labelForBg(dt, now: now) : '—';
       out.add(ChatDateSeparatorEntry(label: label, dayKey: key));
     }
     out.add(ChatMessageEntry(message: msg, originalIndex: i));

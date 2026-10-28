@@ -72,7 +72,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final name = _data?['display_name'] as String? ??
+    final name =
+        _data?['display_name'] as String? ??
         widget.fallbackName ??
         'Потребител';
     final username = _data?['username'] as String? ?? '';
@@ -93,106 +94,104 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                 ),
               )
             : _error != null
-                ? Text(_error!,
-                    style: const TextStyle(color: CriptivoColors.error))
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+            ? Text(_error!, style: const TextStyle(color: CriptivoColors.error))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Container(
+                    width: 88,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: CriptivoColors.neon.withValues(alpha: 0.4),
+                        width: 2,
                       ),
-                      Container(
-                        width: 88,
-                        height: 88,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: CriptivoColors.neon.withValues(alpha: 0.4),
-                            width: 2,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                                  CriptivoColors.neon.withValues(alpha: 0.15),
-                              blurRadius: 16,
-                            ),
-                          ],
-                        ),
-                        child: CircleAvatar(
-                          backgroundColor: CriptivoColors.surfaceLight,
-                          backgroundImage:
-                              avatar != null && avatar.isNotEmpty
-                                  ? NetworkImage(avatar)
-                                  : null,
-                          child: avatar == null || avatar.isEmpty
-                              ? Text(
-                                  initial,
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    color: CriptivoColors.neon,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                )
-                              : null,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          color: CriptivoColors.textPrimary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      if (username.isNotEmpty)
-                        Text(
-                          '@$username',
-                          style: const TextStyle(
-                            color: CriptivoColors.neon,
-                            fontSize: 14,
-                          ),
-                        ),
-                      if (bio != null && bio.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        Text(
-                          bio,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: CriptivoColors.textSecondary,
-                            height: 1.4,
-                          ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: CriptivoColors.neon.withValues(alpha: 0.15),
+                          blurRadius: 16,
                         ),
                       ],
-                      const SizedBox(height: 18),
-                      if (phone != null && phone.isNotEmpty)
-                        _infoRow(Icons.phone_rounded, phone, copyable: true),
-                      if (email != null && email.isNotEmpty)
-                        _infoRow(Icons.email_outlined, email, copyable: true),
-                      if ((phone == null || phone.isEmpty) &&
-                          (email == null || email.isEmpty) &&
-                          (bio == null || bio.isEmpty))
-                        Text(
-                          'Няма публична контактна информация',
-                          style: TextStyle(
-                            color: CriptivoColors.textSecondary
-                                .withValues(alpha: 0.8),
-                            fontSize: 13,
-                          ),
-                        ),
-                      const SizedBox(height: 12),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Затвори'),
-                      ),
-                    ],
+                    ),
+                    child: CircleAvatar(
+                      backgroundColor: CriptivoColors.surfaceLight,
+                      backgroundImage: avatar != null && avatar.isNotEmpty
+                          ? NetworkImage(avatar)
+                          : null,
+                      child: avatar == null || avatar.isEmpty
+                          ? Text(
+                              initial,
+                              style: const TextStyle(
+                                fontSize: 32,
+                                color: CriptivoColors.neon,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            )
+                          : null,
+                    ),
                   ),
+                  const SizedBox(height: 14),
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      color: CriptivoColors.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (username.isNotEmpty)
+                    Text(
+                      '@$username',
+                      style: const TextStyle(
+                        color: CriptivoColors.neon,
+                        fontSize: 14,
+                      ),
+                    ),
+                  if (bio != null && bio.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      bio,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: CriptivoColors.textSecondary,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  if (phone != null && phone.isNotEmpty)
+                    _infoRow(Icons.phone_rounded, phone, copyable: true),
+                  if (email != null && email.isNotEmpty)
+                    _infoRow(Icons.email_outlined, email, copyable: true),
+                  if ((phone == null || phone.isEmpty) &&
+                      (email == null || email.isEmpty) &&
+                      (bio == null || bio.isEmpty))
+                    Text(
+                      'Няма публична контактна информация',
+                      style: TextStyle(
+                        color: CriptivoColors.textSecondary.withValues(
+                          alpha: 0.8,
+                        ),
+                        fontSize: 13,
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Затвори'),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -204,9 +203,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
         onTap: copyable
             ? () {
                 Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Копирано')),
-                );
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Копирано')));
               }
             : null,
         borderRadius: BorderRadius.circular(12),
@@ -228,8 +226,11 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                 ),
               ),
               if (copyable)
-                const Icon(Icons.copy_rounded,
-                    size: 16, color: CriptivoColors.textSecondary),
+                const Icon(
+                  Icons.copy_rounded,
+                  size: 16,
+                  color: CriptivoColors.textSecondary,
+                ),
             ],
           ),
         ),

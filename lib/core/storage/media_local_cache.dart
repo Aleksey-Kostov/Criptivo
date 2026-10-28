@@ -62,9 +62,11 @@ class MediaLocalCache {
     String? preferredName,
   }) async {
     final dir = await getTemporaryDirectory();
-    final safeName = (preferredName ?? 'media')
-        .replaceAll(RegExp(r'[^\w\.\-]'), '_');
-    final file = File('${dir.path}/criptivo_$id\_$safeName');
+    final safeName = (preferredName ?? 'media').replaceAll(
+      RegExp(r'[^\w\.\-]'),
+      '_',
+    );
+    final file = File('${dir.path}/criptivo_${id}_$safeName');
 
     if (await file.exists() && await file.length() > 0) {
       return file;

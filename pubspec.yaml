@@ -32,13 +32,15 @@ dependencies:
   image_picker: ^1.1.2
   file_picker: ^8.1.4
   emoji_picker_flutter: ^4.3.0
+  video_player: ^2.9.2
+  visibility_detector: ^0.4.0+2
 
   # Voice
   record: ^5.2.0
   path_provider: ^2.1.5
   permission_handler: ^11.3.1
 
-  # Open / share downloaded files (preview step)
+  # Open / share
   open_filex: ^4.5.0
   share_plus: ^10.1.4
 
@@ -68,4 +70,3 @@ flutter:
     - family: NotoSansGlagolitic
       fonts:
         - asset: assets/fonts/NotoSansGlagolitic-Regular.ttf
-        

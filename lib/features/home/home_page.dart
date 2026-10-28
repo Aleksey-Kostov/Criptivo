@@ -5,11 +5,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
+import '../../core/chat/conversation_preview_store.dart';
 import '../../core/crypto/key_manager.dart';
 import '../../core/theme/criptivo_theme.dart';
 import '../chat/chat_page.dart';
 import '../chat/new_chat_page.dart';
 import '../profile/profile_page.dart';
+import '../profile/widgets/public_profile_sheet.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -26,7 +28,6 @@ class _HomePageState extends State<HomePage> {
   final Set<String> _notifiedMessageIds = {};
   final Set<String> _notifiedReactionIds = {};
 
-  /// Разговор, отворен в момента — без известия за него
   String? _activeConversationId;
 
   RealtimeChannel? _messagesChannel;
@@ -43,6 +44,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _init() async {
+    await ConversationPreviewStore.load();
     await _forceSyncKey();
     await _loadConversations();
     _subscribeToNewMessages();
@@ -59,13 +61,10 @@ class _HomePageState extends State<HomePage> {
       final local = await KeyManager.getPublicKeyBase64();
       if (local == null) return;
 
-      await Supabase.instance.client
-          .from('profiles')
-          .update({
-            'public_key': local,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('id', user.id);
+      await Supabase.instance.client.from('profiles').update({
+        'public_key': local,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', user.id);
     } catch (e) {
       debugPrint('Key sync failed: $e');
     }
@@ -109,7 +108,10 @@ class _HomePageState extends State<HomePage> {
       final other = item['other_user'] as Map<String, dynamic>?;
       final name = (other?['display_name'] as String? ?? '').toLowerCase();
       final username = (other?['username'] as String? ?? '').toLowerCase();
-      return name.contains(q) || username.contains(q);
+      final convId = item['conversation_id'] as String? ?? '';
+      final preview =
+          (ConversationPreviewStore.get(convId)?.preview ?? '').toLowerCase();
+      return name.contains(q) || username.contains(q) || preview.contains(q);
     }).toList();
   }
 
@@ -136,9 +138,7 @@ class _HomePageState extends State<HomePage> {
               return;
             }
 
-            if (conversationId == _activeConversationId) {
-              return;
-            }
+            if (conversationId == _activeConversationId) return;
 
             if (messageId != null && _notifiedMessageIds.contains(messageId)) {
               return;
@@ -334,7 +334,20 @@ class _HomePageState extends State<HomePage> {
     });
     _clearNotificationUi();
 
+    await ConversationPreviewStore.load();
     await _loadConversations();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openPublicProfile(Map<String, dynamic>? other, String name) async {
+    final id = other?['id'] as String?;
+    if (id == null) return;
+    await PublicProfileSheet.show(
+      context,
+      userId: id,
+      fallbackName: name,
+      fallbackAvatar: other?['avatar_url'] as String?,
+    );
   }
 
   Future<void> _loadConversations({bool quiet = false}) async {
@@ -408,18 +421,54 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildAvatar(Map<String, dynamic>? other, String name) {
-    final avatarUrl = other?['avatar_url'] as String?;
-    final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
+    final url = other?['avatar_url'] as String?;
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
 
     return CircleAvatar(
+      radius: 24,
       backgroundColor: CriptivoColors.surfaceLight,
-      backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
-      child: hasAvatar
-          ? null
-          : Text(
-              name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: const TextStyle(color: CriptivoColors.neon),
-            ),
+      backgroundImage: url != null && url.isNotEmpty ? NetworkImage(url) : null,
+      child: url == null || url.isEmpty
+          ? Text(
+              initial,
+              style: const TextStyle(
+                color: CriptivoColors.neon,
+                fontWeight: FontWeight.w700,
+                fontSize: 18,
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: TextField(
+        controller: _searchController,
+        style: const TextStyle(color: CriptivoColors.textPrimary),
+        decoration: InputDecoration(
+          hintText: 'Търси разговор…',
+          prefixIcon: const Icon(Icons.search_rounded),
+          suffixIcon: _searchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                ),
+          isDense: true,
+          filled: true,
+          fillColor: CriptivoColors.surfaceLight,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        onChanged: (v) => setState(() => _searchQuery = v),
+      ),
     );
   }
 
@@ -430,39 +479,28 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: CriptivoColors.surfaceLight,
-                border: Border.all(
-                  color: CriptivoColors.neon.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Icon(
-                isSearch ? Icons.search_off_rounded : Icons.lock_outline_rounded,
-                size: 40,
-                color: CriptivoColors.neon,
-              ),
+            Icon(
+              isSearch ? Icons.search_off_rounded : Icons.forum_outlined,
+              size: 48,
+              color: CriptivoColors.neon.withValues(alpha: 0.5),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             Text(
-              isSearch ? 'Няма резултати' : 'Няма разговори',
+              isSearch ? 'Няма резултати' : 'Няма разговори още',
               style: const TextStyle(
                 color: CriptivoColors.textPrimary,
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               isSearch
-                  ? 'Опитай с друго име или username.'
-                  : 'Натисни + за да започнеш\nзащитен чат.',
+                  ? 'Опитай с друго име или username'
+                  : 'Започни чат с бутона долу',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: CriptivoColors.textSecondary.withValues(alpha: 0.9),
-                height: 1.4,
               ),
             ),
           ],
@@ -471,52 +509,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: TextField(
-        controller: _searchController,
-        style: const TextStyle(color: CriptivoColors.textPrimary),
-        decoration: InputDecoration(
-          hintText: 'Търси разговор...',
-          prefixIcon: const Icon(Icons.search_rounded),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () {
-                    _searchController.clear();
-                    setState(() => _searchQuery = '');
-                  },
-                )
-              : null,
-          filled: true,
-          fillColor: CriptivoColors.surfaceLight,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 12,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide(
-              color: CriptivoColors.neon.withValues(alpha: 0.15),
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide(
-              color: CriptivoColors.neon.withValues(alpha: 0.45),
-            ),
-          ),
-        ),
-        onChanged: (value) {
-          setState(() => _searchQuery = value);
-        },
-      ),
-    );
+  String _subtitleFor(String conversationId, bool isUnread, Map<String, dynamic>? other) {
+    final preview = ConversationPreviewStore.get(conversationId);
+    if (preview != null && preview.preview.isNotEmpty) {
+      return preview.preview;
+    }
+    if (isUnread) return 'Ново съобщение';
+    final username = other?['username'] as String?;
+    if (username != null && username.isNotEmpty) return '@$username';
+    return '';
   }
 
   @override
@@ -529,13 +530,14 @@ class _HomePageState extends State<HomePage> {
         title: const Text('Criptivo'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.person_outline),
+            icon: const Icon(Icons.person_outline_rounded),
             tooltip: 'Профил',
             onPressed: () async {
               await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ProfilePage()),
               );
+              if (mounted) setState(() {});
             },
           ),
           IconButton(
@@ -575,12 +577,21 @@ class _HomePageState extends State<HomePage> {
                                       _unread.contains(conversationId);
                                   final lastAt =
                                       _formatLastAt(item['last_message_at']);
+                                  final subtitle = _subtitleFor(
+                                    conversationId,
+                                    isUnread,
+                                    other,
+                                  );
 
                                   return ListTile(
                                     leading: Stack(
                                       clipBehavior: Clip.none,
                                       children: [
-                                        _buildAvatar(other, name),
+                                        GestureDetector(
+                                          onTap: () =>
+                                              _openPublicProfile(other, name),
+                                          child: _buildAvatar(other, name),
+                                        ),
                                         if (isUnread)
                                           Positioned(
                                             right: -2,
@@ -601,14 +612,12 @@ class _HomePageState extends State<HomePage> {
                                       style: TextStyle(
                                         color: CriptivoColors.textPrimary,
                                         fontWeight: isUnread
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                       ),
                                     ),
                                     subtitle: Text(
-                                      isUnread
-                                          ? 'Ново съобщение'
-                                          : '@${other?['username'] ?? ''}',
+                                      subtitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
@@ -616,8 +625,9 @@ class _HomePageState extends State<HomePage> {
                                             ? CriptivoColors.neon
                                             : CriptivoColors.textSecondary,
                                         fontWeight: isUnread
-                                            ? FontWeight.w500
+                                            ? FontWeight.w600
                                             : FontWeight.normal,
+                                        fontSize: 13,
                                       ),
                                     ),
                                     trailing: Column(

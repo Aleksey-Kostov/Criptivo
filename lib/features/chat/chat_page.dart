@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
+import '../../core/chat/conversation_preview_store.dart';
 import '../../core/chat/link_preview_service.dart';
 import '../../core/chat/reaction_service.dart';
 import '../../core/chat/typing_service.dart';
@@ -329,6 +330,35 @@ class _ChatPageState extends State<ChatPage> {
       return '$h:$m';
     } catch (_) {
       return '';
+    }
+  }
+
+  Future<void> _rememberPreview({
+    required String plaintext,
+    required bool isMe,
+    String? messageId,
+    dynamic createdAt,
+  }) async {
+    DateTime? at;
+    if (createdAt != null) {
+      try {
+        at = createdAt is DateTime
+            ? createdAt.toUtc()
+            : DateTime.parse(createdAt.toString()).toUtc();
+      } catch (_) {}
+    }
+
+    try {
+      await ConversationPreviewStore.save(
+        conversationId: widget.conversationId,
+        plaintext: plaintext,
+        isMe: isMe,
+        messageId: messageId,
+        at: at,
+      );
+    } catch (e) {
+      // Preview storage must not break message sending/receiving.
+      debugPrint('Conversation preview save error: $e');
     }
   }
 
@@ -766,6 +796,12 @@ class _ChatPageState extends State<ChatPage> {
             if (!mounted) return;
             final msg = _messageFromPlaintext(row, plaintext, isMe);
             setState(() => _messages.add(msg));
+            await _rememberPreview(
+              plaintext: plaintext,
+              isMe: false,
+              messageId: row['id']?.toString(),
+              createdAt: row['created_at'],
+            );
             _scrollHelper.onIncomingMessage();
             await ChatService.markMessagesAsRead(widget.conversationId);
           },
@@ -847,6 +883,17 @@ class _ChatPageState extends State<ChatPage> {
           decrypted.length != _messages.length || !_sameReadState(decrypted);
       if (changed) {
         setState(() => _messages = decrypted);
+        if (decrypted.isNotEmpty) {
+          final last = decrypted.last;
+          await _rememberPreview(
+            plaintext: last['plaintext_raw'] as String? ??
+                last['text'] as String? ??
+                '',
+            isMe: last['is_me'] == true,
+            messageId: last['id']?.toString(),
+            createdAt: last['created_at'],
+          );
+        }
         if (grew) _scrollHelper.onIncomingMessage();
       }
     } catch (e) {
@@ -898,6 +945,18 @@ class _ChatPageState extends State<ChatPage> {
         _messages = decrypted;
         _loading = false;
       });
+      if (decrypted.isNotEmpty) {
+        final last = decrypted.last;
+        final raw = last['plaintext_raw'] as String? ??
+            last['text'] as String? ??
+            '';
+        await _rememberPreview(
+          plaintext: raw,
+          isMe: last['is_me'] == true,
+          messageId: last['id']?.toString(),
+          createdAt: last['created_at'],
+        );
+      }
       _scrollHelper.scrollToBottom();
     } catch (e) {
       if (!mounted) return;
@@ -952,6 +1011,7 @@ class _ChatPageState extends State<ChatPage> {
         _messages.add({
           'id': tempId,
           'text': text,
+          'plaintext_raw': plaintext,
           'is_me': true,
           'sender_id': AuthService.currentUser?.id,
           'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -977,6 +1037,7 @@ class _ChatPageState extends State<ChatPage> {
           _messages[i] = {
             ...inserted,
             'text': text,
+            'plaintext_raw': plaintext,
             'is_me': true,
             'media': null,
             'reply_preview': replyPreview,
@@ -984,6 +1045,12 @@ class _ChatPageState extends State<ChatPage> {
           };
         }
       });
+      await _rememberPreview(
+        plaintext: plaintext,
+        isMe: true,
+        messageId: inserted['id']?.toString(),
+        createdAt: inserted['created_at'],
+      );
     } catch (e) {
       setState(() {
         _messages.removeWhere(
@@ -1020,6 +1087,7 @@ class _ChatPageState extends State<ChatPage> {
         _messages.add({
           'id': tempId,
           'text': preview,
+          'plaintext_raw': ref.envelopeJson,
           'is_me': true,
           'sender_id': AuthService.currentUser?.id,
           'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -1041,12 +1109,19 @@ class _ChatPageState extends State<ChatPage> {
           _messages[i] = {
             ...inserted,
             'text': preview,
+            'plaintext_raw': ref.envelopeJson,
             'is_me': true,
             'media': media,
             'reactions': <Map<String, dynamic>>[],
           };
         }
       });
+      await _rememberPreview(
+        plaintext: ref.envelopeJson,
+        isMe: true,
+        messageId: inserted['id']?.toString(),
+        createdAt: inserted['created_at'],
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Медия: $e');
@@ -1080,6 +1155,7 @@ class _ChatPageState extends State<ChatPage> {
         _messages.add({
           'id': tempId,
           'text': preview,
+          'plaintext_raw': uploaded.envelopeJson,
           'is_me': true,
           'sender_id': AuthService.currentUser?.id,
           'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -1100,12 +1176,19 @@ class _ChatPageState extends State<ChatPage> {
           _messages[i] = {
             ...inserted,
             'text': preview,
+            'plaintext_raw': uploaded.envelopeJson,
             'is_me': true,
             'media': media,
             'reactions': <Map<String, dynamic>>[],
           };
         }
       });
+      await _rememberPreview(
+        plaintext: uploaded.envelopeJson,
+        isMe: true,
+        messageId: inserted['id']?.toString(),
+        createdAt: inserted['created_at'],
+      );
     } catch (e) {
       if (mounted) setState(() => _error = 'Глас: $e');
     } finally {

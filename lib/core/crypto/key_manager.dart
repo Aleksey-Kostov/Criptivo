@@ -25,7 +25,7 @@ class KeyManager {
   /// Чете ключ от защитеното хранилище.
   ///
   /// Ако липсва, мигрира старата стойност от SharedPreferences.
-  /// При грешка не връща старата стойност като резервен вариант.
+  /// При грешка не използва старата стойност като резервен вариант.
   static Future<String?> _read(String key) async {
     final String? secureValue;
 
@@ -43,7 +43,6 @@ class KeyManager {
       return secureValue;
     }
 
-    // Миграция на ключове от по-стари версии на приложението.
     final prefs = await SharedPreferences.getInstance();
     final legacyValue = prefs.getString(key);
 
@@ -54,14 +53,12 @@ class KeyManager {
     try {
       await _secure.write(key: key, value: legacyValue);
 
-      // Проверяваме, че записаната стойност може да бъде прочетена.
       final verifiedValue = await _secure.read(key: key);
 
       if (verifiedValue != legacyValue) {
         throw StateError('Проверката на мигрирания ключ е неуспешна.');
       }
 
-      // Изтриваме старата стойност само след успешна проверка.
       final removed = await prefs.remove(key);
 
       if (!removed || prefs.containsKey(key)) {
@@ -70,7 +67,6 @@ class KeyManager {
 
       return verifiedValue;
     } catch (_) {
-      // Не изтриваме автоматично старата стойност при неуспешна миграция.
       throw StateError(
         'Миграцията на ключа не беше завършена. '
         'Не изтривай данните на приложението и опитай отново.',
@@ -79,7 +75,6 @@ class KeyManager {
   }
 
   /// Записва ключ само в защитеното хранилище.
-  /// Не използва SharedPreferences като резервен вариант.
   static Future<void> _write(String key, String value) async {
     try {
       await _secure.write(key: key, value: value);
@@ -99,7 +94,7 @@ class KeyManager {
     }
   }
 
-  /// Премахва старо копие, след като защитеното копие е потвърдено.
+  /// Премахва старо копие само след потвърждение на защитеното копие.
   static Future<void> _removeLegacyCopy(String key) async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -115,8 +110,6 @@ class KeyManager {
   }
 
   static Future<void> _delete(String key) async {
-    // Ако защитеното хранилище не може да изтрие ключа,
-    // не продължаваме тихо.
     await _secure.delete(key: key);
 
     final remaining = await _secure.read(key: key);
@@ -133,16 +126,76 @@ class KeyManager {
     }
   }
 
+  /// Проверява дали съществува валидна, пълна двойка X25519 ключове.
+  ///
+  /// Връща false само когато и двата ключа липсват.
+  /// При частична или несъответстваща двойка хвърля StateError.
   static Future<bool> hasKeys() async {
     final priv = await _read(_privateKeyKey);
     final pub = await _read(_publicKeyKey);
 
-    return priv != null && priv.isNotEmpty && pub != null && pub.isNotEmpty;
+    final hasPrivate = priv != null && priv.isNotEmpty;
+    final hasPublic = pub != null && pub.isNotEmpty;
+
+    if (!hasPrivate && !hasPublic) {
+      return false;
+    }
+
+    if (!hasPrivate || !hasPublic) {
+      throw StateError(
+        'Непълна криптографска идентичност: липсва частен или публичен ключ. '
+        'Възстанови правилната двойка от архив. '
+        'Не създавай нова идентичност автоматично.',
+      );
+    }
+
+    try {
+      final privateBytes = base64Decode(priv);
+      final publicBytes = base64Decode(pub);
+
+      if (privateBytes.length != 32 || publicBytes.length != 32) {
+        throw const FormatException('Невалидна дължина на X25519 ключ.');
+      }
+
+      final pair = await _x25519.newKeyPairFromSeed(privateBytes);
+      final derivedPublic = await pair.extractPublicKey();
+
+      if (!_bytesEqual(derivedPublic.bytes, publicBytes)) {
+        throw StateError(
+          'Локалните публичен и частен ключ не съвпадат. '
+          'Възстанови правилната двойка от архив.',
+        );
+      }
+    } on StateError {
+      rethrow;
+    } catch (_) {
+      throw StateError(
+        'Локалните криптографски ключове са невалидни. '
+        'Възстанови правилната двойка от архив.',
+      );
+    }
+
+    return true;
   }
 
-  /// Генерира и записва нова двойка ключове.
-  /// Използвай само при първоначално създаване на идентичност.
+  /// Генерира нова двойка ключове само ако няма записани ключове.
+  ///
+  /// Не използвай този метод за смяна на съществуваща идентичност.
   static Future<void> generateAndStoreKeys() async {
+    final existingPrivate = await _read(_privateKeyKey);
+    final existingPublic = await _read(_publicKeyKey);
+
+    final hasPrivate = existingPrivate != null && existingPrivate.isNotEmpty;
+    final hasPublic = existingPublic != null && existingPublic.isNotEmpty;
+
+    if (hasPrivate || hasPublic) {
+      throw StateError(
+        'Вече има запазени криптографски ключове. '
+        'Те няма да бъдат презаписани автоматично. '
+        'Провери или възстанови идентичността.',
+      );
+    }
+
     final keyPair = await _x25519.newKeyPair();
     final privateBytes = await keyPair.extractPrivateKeyBytes();
     final publicKey = await keyPair.extractPublicKey();
@@ -150,7 +203,6 @@ class KeyManager {
     final privateBase64 = base64Encode(privateBytes);
     final publicBase64 = base64Encode(publicKey.bytes);
 
-    // Ако записването на частния ключ се провали, спираме.
     await _write(_privateKeyKey, privateBase64);
 
     try {
@@ -160,22 +212,22 @@ class KeyManager {
       try {
         await _delete(_privateKeyKey);
       } catch (_) {
-        // Не скриваме първоначалната грешка.
+        // Запазваме първоначалната грешка.
       }
       rethrow;
     }
 
-    // Никога не извеждаме ключове в логовете.
     debugPrint('KeyManager: новата двойка ключове е записана.');
   }
 
-  /// Ако ключовете съществуват, запазва ги.
-  /// Ако липсват, създава нова идентичност.
+  /// Запазва съществуващата валидна идентичност.
   ///
-  /// Важно: извиквай само след като миграцията на старите ключове
-  /// е завършила успешно.
+  /// Генерира ключове само ако и двата ключа липсват.
+  /// При частична или невалидна идентичност спира.
   static Future<void> ensureKeys() async {
-    if (await hasKeys()) {
+    final exists = await hasKeys();
+
+    if (exists) {
       return;
     }
 
@@ -198,12 +250,22 @@ class KeyManager {
 
   /// Възстановява двойка ключове от архив.
   /// Проверява, че публичният ключ съответства на частния.
+  ///
+  /// Внимание: този метод може да замени съществуваща двойка.
+  /// Извиквай го само след изрично потвърждение от потребителя.
   static Future<void> importKeyPair({
     required String privateKeyBase64,
     required String publicKeyBase64,
   }) async {
-    final privateBytes = base64Decode(privateKeyBase64);
-    final publicBytes = base64Decode(publicKeyBase64);
+    final List<int> privateBytes;
+    final List<int> publicBytes;
+
+    try {
+      privateBytes = base64Decode(privateKeyBase64);
+      publicBytes = base64Decode(publicKeyBase64);
+    } catch (_) {
+      throw ArgumentError('Архивът съдържа невалиден Base64 ключ.');
+    }
 
     if (privateBytes.length != 32) {
       throw ArgumentError('Частният ключ трябва да е 32 байта.');
@@ -222,16 +284,9 @@ class KeyManager {
       );
     }
 
-    // Записваме частния ключ първо.
+    // Не изтриваме старите ключове автоматично при грешка.
     await _write(_privateKeyKey, privateKeyBase64);
-
-    try {
-      await _write(_publicKeyKey, publicKeyBase64);
-    } catch (_) {
-      // Не изтриваме частния ключ автоматично тук:
-      // той може да е бил валиден преди импорта.
-      rethrow;
-    }
+    await _write(_publicKeyKey, publicKeyBase64);
 
     debugPrint('KeyManager: ключовете са възстановени от архив.');
   }
@@ -244,7 +299,18 @@ class KeyManager {
       return null;
     }
 
-    final bytes = base64Decode(publicKey);
+    final List<int> bytes;
+
+    try {
+      bytes = base64Decode(publicKey);
+    } catch (_) {
+      throw StateError('Записаният публичен ключ е невалиден.');
+    }
+
+    if (bytes.length != 32) {
+      throw StateError('Записаният публичен ключ е с невалидна дължина.');
+    }
+
     final hash = await Sha256().hash(bytes);
 
     return hash.bytes
@@ -254,6 +320,9 @@ class KeyManager {
         .toUpperCase();
   }
 
+  /// Изтрива ключовете.
+  ///
+  /// Използвай само при изрично потвърдено действие на потребителя.
   static Future<void> clearKeys() async {
     await _delete(_privateKeyKey);
     await _delete(_publicKeyKey);

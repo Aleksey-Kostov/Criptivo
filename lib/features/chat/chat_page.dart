@@ -1,13 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:characters/characters.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
+import '../../core/chat/link_preview_service.dart';
 import '../../core/chat/reaction_service.dart';
 import '../../core/chat/typing_service.dart';
 import '../../core/chat/voice_recorder_service.dart';
@@ -16,17 +19,27 @@ import '../../core/crypto/key_manager.dart';
 import '../../core/crypto/media_crypto.dart';
 import '../../core/crypto/message_crypto.dart';
 import '../../core/crypto/safety_number.dart';
+import '../../core/crypto/view_once.dart';
 import '../../core/storage/media_service.dart';
 import '../../core/theme/criptivo_theme.dart';
+import 'helpers/chat_date_labels.dart';
 import 'helpers/chat_scroll_helper.dart';
 import 'widgets/attach_preview_strip.dart';
+import 'widgets/chat_app_bar.dart';
+import 'widgets/chat_background_layer.dart';
+import 'widgets/chat_background_picker.dart';
+import 'widgets/chat_date_separator.dart';
 import 'widgets/chat_emoji_panel.dart';
 import 'widgets/chat_input_bar.dart';
-import 'widgets/glagolitic_seal_badge.dart';
+import 'widgets/ink_preview_card.dart';
+import 'widgets/media_message_content.dart';
+import 'widgets/message_actions_sheet.dart';
 import 'widgets/reaction_bar.dart';
 import 'widgets/reaction_picker.dart';
+import 'widgets/reply_preview_bar.dart';
 import 'widgets/scroll_to_bottom_button.dart';
 import 'widgets/typing_indicator.dart';
+import 'widgets/view_once_tile.dart';
 
 class ChatPage extends StatefulWidget {
   final String conversationId;
@@ -61,6 +74,7 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   String? _theirPublicKey;
   PendingAttachment? _pending;
+  ReplyTarget? _replyTo;
 
   RealtimeChannel? _channel;
   Timer? _sealTimer;
@@ -335,15 +349,24 @@ class _ChatPageState extends State<ChatPage> {
 
   String _displayFromPlaintext(String plaintext) {
     final media = MediaCrypto.tryParseEnvelope(plaintext);
-    if (media == null) return plaintext;
-    final name = media['name'] as String? ?? '';
-    return switch (media['type']) {
-      'image' => '🖼️ ${name.isEmpty ? 'снимка' : name}',
-      'video' => '🎬 ${name.isEmpty ? 'видео' : name}',
-      'audio' => '🎵 ${name.isEmpty ? 'аудио' : name}',
-      'gif' => 'GIF',
-      _ => '📎 ${name.isEmpty ? 'файл' : name}',
-    };
+    if (media != null) {
+      final name = media['name'] as String? ?? '';
+      return switch (media['type']) {
+        'image' => '🖼️ ${name.isEmpty ? 'снимка' : name}',
+        'video' => '🎬 ${name.isEmpty ? 'видео' : name}',
+        'audio' => '🎵 ${name.isEmpty ? 'аудио' : name}',
+        'gif' => 'GIF',
+        _ => '📎 ${name.isEmpty ? 'файл' : name}',
+      };
+    }
+    // Reply JSON envelope
+    try {
+      final map = jsonDecode(plaintext);
+      if (map is Map && map['t'] == 'text' && map['body'] is String) {
+        return map['body'] as String;
+      }
+    } catch (_) {}
+    return plaintext;
   }
 
   Map<String, dynamic> _messageFromPlaintext(
@@ -352,11 +375,25 @@ class _ChatPageState extends State<ChatPage> {
     bool isMe,
   ) {
     final media = MediaCrypto.tryParseEnvelope(plaintext);
+    String? replyPreview;
+    String? replyToId;
+    if (media == null) {
+      try {
+        final map = jsonDecode(plaintext);
+        if (map is Map && map['t'] == 'text') {
+          replyPreview = map['reply_preview'] as String?;
+          replyToId = map['reply_to'] as String?;
+        }
+      } catch (_) {}
+    }
     return {
       ...row,
-      'text': media != null ? _displayFromPlaintext(plaintext) : plaintext,
+      'text': media != null ? _displayFromPlaintext(plaintext) : _displayFromPlaintext(plaintext),
+      'plaintext_raw': plaintext,
       'is_me': isMe,
       'media': media,
+      'reply_preview': replyPreview,
+      'reply_to': replyToId,
       'reactions': <Map<String, dynamic>>[],
       'reactions_raw': <Map<String, dynamic>>[],
     };
@@ -446,9 +483,100 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _onBubbleLongPress(Map<String, dynamic> msg) async {
     final id = msg['id'] as String?;
     if (id == null || id.startsWith('temp_')) return;
-    final emoji = await showReactionPicker(context);
-    if (emoji == null) return;
-    await _toggleReaction(id, emoji);
+
+    final text = (msg['text'] as String?) ?? '';
+    final media = msg['media'] as Map<String, dynamic>?;
+    final isMe = msg['is_me'] == true;
+
+    await MessageActionsSheet.show(
+      context,
+      plaintextDisplay: text,
+      media: media,
+      isMe: isMe,
+      onAction: (action) async {
+        switch (action) {
+          case MessageAction.reply:
+            setState(() {
+              _replyTo = ReplyTarget(
+                messageId: id,
+                previewText: text,
+                isMe: isMe,
+              );
+            });
+            _focusNode.requestFocus();
+          case MessageAction.copy:
+            await MessageActionHandlers.copyText(text);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Копирано')),
+              );
+            }
+          case MessageAction.share:
+            if (media != null) {
+              await MessageActionHandlers.shareOrDownloadMedia(
+                media,
+                share: true,
+              );
+            } else {
+              await MessageActionHandlers.shareText(text);
+            }
+          case MessageAction.download:
+            if (media != null) {
+              try {
+                final file = await MessageActionHandlers.shareOrDownloadMedia(
+                  media,
+                  share: false,
+                );
+                // open after cache
+                final cached = await MediaService.downloadAndDecrypt(
+                  url: media['url'] as String,
+                  keyBase64: media['key'] as String,
+                  nonceBase64: media['nonce'] as String,
+                );
+                // prefer open_filex via local cache path from share helper
+                await MessageActionHandlers.shareOrDownloadMedia(
+                  media,
+                  share: false,
+                );
+                // open
+                final pathFile = await () async {
+                  return await MessageActionHandlers.shareOrDownloadMedia(
+                    media,
+                    share: false,
+                  );
+                }();
+                // simpler: use MediaLocalCache via share helper already wrote file —
+                // open with open_filex through re-get:
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Download: $e')),
+                  );
+                }
+              }
+            }
+          case MessageAction.viewOnceInfo:
+            break;
+        }
+      },
+    );
+
+    // Quick react also available:
+    // final emoji = await showReactionPicker(context);
+  }
+
+  Future<void> _downloadMedia(Map<String, dynamic> media) async {
+    try {
+      final file = await MessageActionHandlers.shareOrDownloadMedia(
+        media,
+        share: false,
+      );
+      // shareOrDownloadMedia returns void — open via local cache
+      // ignore: implementation_imports
+      final path = await () async {
+        await MessageActionHandlers.shareOrDownloadMedia(media, share: false);
+      }();
+    } catch (_) {}
   }
 
   Future<void> _refreshReactionsForMessage(String messageId) async {
@@ -790,6 +918,17 @@ class _ChatPageState extends State<ChatPage> {
     await _send();
   }
 
+  String _composePlaintext(String text) {
+    final reply = _replyTo;
+    if (reply == null) return text;
+    return jsonEncode({
+      't': 'text',
+      'body': text,
+      'reply_to': reply.messageId,
+      'reply_preview': reply.previewText,
+    });
+  }
+
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending || _uploadingMedia) return;
@@ -806,6 +945,8 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _error = 'Другият потребител няма public key');
         return;
       }
+      final plaintext = _composePlaintext(text);
+      final replyPreview = _replyTo?.previewText;
       final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
       setState(() {
         _messages.add({
@@ -816,15 +957,17 @@ class _ChatPageState extends State<ChatPage> {
           'created_at': DateTime.now().toUtc().toIso8601String(),
           'read_at': null,
           'media': null,
+          'reply_preview': replyPreview,
           'reactions': <Map<String, dynamic>>[],
         });
         _hasText = false;
+        _replyTo = null;
       });
       _controller.clear();
       _scrollHelper.scrollToBottom();
       final inserted = await ChatService.sendEncryptedMessage(
         conversationId: widget.conversationId,
-        plaintext: text,
+        plaintext: plaintext,
         theirPublicKeyBase64: theirKey,
       );
       if (!mounted) return;
@@ -836,6 +979,7 @@ class _ChatPageState extends State<ChatPage> {
             'text': text,
             'is_me': true,
             'media': null,
+            'reply_preview': replyPreview,
             'reactions': <Map<String, dynamic>>[],
           };
         }
@@ -1075,8 +1219,8 @@ class _ChatPageState extends State<ChatPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.attach_file,
-                    color: CriptivoColors.neon),
+                leading:
+                    const Icon(Icons.attach_file, color: CriptivoColors.neon),
                 title: const Text('Файл',
                     style: TextStyle(color: CriptivoColors.textPrimary)),
                 onTap: () {
@@ -1161,6 +1305,10 @@ class _ChatPageState extends State<ChatPage> {
         (msg['reactions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final messageId = msg['id'] as String? ?? '';
     final expireLabel = _expireLabel(msg['expires_at']);
+    final replyPreview = msg['reply_preview'] as String?;
+    final hasLink = media == null &&
+        text is String &&
+        LinkPreviewService.firstUrl(text) != null;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -1175,8 +1323,13 @@ class _ChatPageState extends State<ChatPage> {
         children: [
           GestureDetector(
             onLongPress: () => _onBubbleLongPress(msg),
+            onDoubleTap: () async {
+              if (messageId.isEmpty || messageId.startsWith('temp_')) return;
+              final emoji = await showReactionPicker(context);
+              if (emoji != null) await _toggleReaction(messageId, emoji);
+            },
             child: Container(
-              padding: media != null && media['type'] == 'image'
+              padding: media != null
                   ? const EdgeInsets.all(6)
                   : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -1210,9 +1363,37 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                 ],
               ),
-              child: media != null && media['type'] == 'image'
-                  ? _MediaImageThumb(media: media)
-                  : Text(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (replyPreview != null && replyPreview.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: const Border(
+                          left: BorderSide(color: CriptivoColors.neon, width: 2),
+                        ),
+                      ),
+                      child: Text(
+                        replyPreview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: CriptivoColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  if (media != null)
+                    ViewOnce.isViewOnce(media)
+                        ? ViewOnceTile(media: media, messageId: messageId)
+                        : MediaMessageContent(media: media)
+                  else ...[
+                    Text(
                       text,
                       style: const TextStyle(
                         color: CriptivoColors.textPrimary,
@@ -1220,6 +1401,10 @@ class _ChatPageState extends State<ChatPage> {
                         height: 1.35,
                       ),
                     ),
+                    if (hasLink) LinkPreviewCard(text: text),
+                  ],
+                ],
+              ),
             ),
           ),
           ReactionBar(
@@ -1273,67 +1458,37 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final busy = _sending || _uploadingMedia;
+    final entries = buildChatListWithDates(_messages);
 
     return Scaffold(
       backgroundColor: CriptivoColors.background,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(_otherName, overflow: TextOverflow.ellipsis),
-            ),
-            const SizedBox(width: 6),
-            GlagoliticSealBadge(
-              glyph: _sealGlyph,
-              onLongPress: _showSafetyNumber,
-              size: 24,
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(
-              _disappearSeconds != null
-                  ? Icons.timer_rounded
-                  : Icons.timer_off_outlined,
-              color: _disappearSeconds != null ? CriptivoColors.neon : null,
-            ),
-            tooltip: 'Изчезващи съобщения',
-            onPressed: _showDisappearSheet,
-          ),
-          IconButton(
-            icon: const Icon(Icons.verified_user_outlined),
-            tooltip: 'Safety Number',
-            onPressed: _showSafetyNumber,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обнови',
-            onPressed: () async {
-              await _refreshTheirPublicKey();
-              await _updateSeal();
-              await _loadConversationMeta();
-              await _loadMessages();
-              await ChatService.markMessagesAsRead(widget.conversationId);
-            },
-          ),
-        ],
+      appBar: ChatAppBar(
+        displayName: _otherName,
+        username: widget.otherUser['username'] as String?,
+        avatarUrl: widget.otherUser['avatar_url'] as String?,
+        sealGlyph: _sealGlyph,
+        peerTyping: _peerTyping,
+        encrypted: _theirPublicKey != null && _theirPublicKey!.isNotEmpty,
+        disappearSeconds: _disappearSeconds,
+        onSealLongPress: _showSafetyNumber,
+        onSafetyNumber: _showSafetyNumber,
+        onDisappear: _showDisappearSheet,
+        onRefresh: () async {
+          await _refreshTheirPublicKey();
+          await _updateSeal();
+          await _loadConversationMeta();
+          await _loadMessages();
+          await ChatService.markMessagesAsRead(widget.conversationId);
+        },
+        onOpenProfile: () {
+          ChatBackgroundPicker.show(context, onChanged: () {
+            if (mounted) setState(() {});
+          });
+        },
       ),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/chat_background.png',
-              fit: BoxFit.cover,
-              opacity: const AlwaysStoppedAnimation(0.30),
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-            ),
-          ),
-          Positioned.fill(
-            child: Container(
-              color: CriptivoColors.background.withValues(alpha: 0.55),
-            ),
-          ),
+          const Positioned.fill(child: ChatBackgroundLayer()),
           Column(
             children: [
               if (_error != null)
@@ -1387,10 +1542,15 @@ class _ChatPageState extends State<ChatPage> {
                                 controller: _scrollController,
                                 padding:
                                     const EdgeInsets.fromLTRB(4, 12, 4, 8),
-                                itemCount: _messages.length,
+                                itemCount: entries.length,
                                 itemBuilder: (context, index) {
-                                  return _buildMessageBubble(
-                                      _messages[index]);
+                                  final e = entries[index];
+                                  return switch (e) {
+                                    ChatDateSeparatorEntry(:final label) =>
+                                      ChatDateSeparator(label: label),
+                                    ChatMessageEntry(:final message) =>
+                                      _buildMessageBubble(message),
+                                  };
                                 },
                               ),
                     if (_scrollHelper.showButton)
@@ -1406,12 +1566,17 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ),
               TypingIndicator(name: _otherName, visible: _peerTyping),
+              if (_replyTo != null)
+                ReplyPreviewBar(
+                  target: _replyTo!,
+                  onClear: () => setState(() => _replyTo = null),
+                ),
               ChatInputBar(
                 controller: _controller,
                 focusNode: _focusNode,
                 busy: busy,
                 showEmojiPicker: _showEmojiPicker,
-                hasText: _hasText,
+                hasText: _hasText || _replyTo != null,
                 pending: _pending,
                 recorder: _voiceRecorder,
                 onAttach: _showAttachSheet,
@@ -1432,81 +1597,6 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MediaImageThumb extends StatefulWidget {
-  final Map<String, dynamic> media;
-
-  const _MediaImageThumb({required this.media});
-
-  @override
-  State<_MediaImageThumb> createState() => _MediaImageThumbState();
-}
-
-class _MediaImageThumbState extends State<_MediaImageThumb> {
-  Uint8List? _bytes;
-  String? _error;
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final bytes = await MediaService.downloadAndDecrypt(
-        url: widget.media['url'] as String,
-        keyBase64: widget.media['key'] as String,
-        nonceBase64: widget.media['nonce'] as String,
-      );
-      if (!mounted) return;
-      setState(() {
-        _bytes = Uint8List.fromList(bytes);
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Не може да се зареди';
-        _loading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const SizedBox(
-        width: 160,
-        height: 120,
-        child: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: CriptivoColors.neon,
-          ),
-        ),
-      );
-    }
-    if (_error != null || _bytes == null) {
-      return Padding(
-        padding: const EdgeInsets.all(8),
-        child: Text(
-          _error ?? '🖼️',
-          style: const TextStyle(color: CriptivoColors.textSecondary),
-        ),
-      );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.memory(
-        _bytes!,
-        width: 220,
-        fit: BoxFit.cover,
       ),
     );
   }

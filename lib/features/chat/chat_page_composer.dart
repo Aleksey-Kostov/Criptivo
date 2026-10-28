@@ -12,6 +12,7 @@ extension _ChatPageComposer on _ChatPageState {
   String _composePlaintext(String text) {
     final reply = _replyTo;
     if (reply == null) return text;
+
     return jsonEncode({
       't': 'text',
       'body': text,
@@ -24,6 +25,8 @@ extension _ChatPageComposer on _ChatPageState {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending || _uploadingMedia) return;
 
+    String? tempId;
+
     _safeSetState(() {
       _sending = true;
       _error = null;
@@ -33,20 +36,20 @@ extension _ChatPageComposer on _ChatPageState {
     await _typingService?.setTyping(false);
 
     try {
+      // Verify the current peer key before preparing the message.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        _safeSetState(() {
-          _error = 'Другият потребител няма public key';
-        });
-        return;
+        throw StateError('Другият потребител няма потвърден публичен ключ.');
       }
 
+      final replyAtSend = _replyTo;
       final plaintext = _composePlaintext(text);
-      final replyPreview = _replyTo?.previewText;
-      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+      final replyPreview = replyAtSend?.previewText;
+
+      tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
 
       _safeSetState(() {
         _messages.add({
@@ -61,11 +64,8 @@ extension _ChatPageComposer on _ChatPageState {
           'reply_preview': replyPreview,
           'reactions': <Map<String, dynamic>>[],
         });
-        _hasText = false;
-        _replyTo = null;
       });
 
-      _controller.clear();
       _scrollHelper.scrollToBottom();
 
       final inserted = await ChatService.sendEncryptedMessage(
@@ -78,6 +78,7 @@ extension _ChatPageComposer on _ChatPageState {
 
       _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
+
         if (i != -1) {
           _messages[i] = {
             ...inserted,
@@ -89,26 +90,54 @@ extension _ChatPageComposer on _ChatPageState {
             'reactions': <Map<String, dynamic>>[],
           };
         }
+
+        // Clear only the text that was actually sent. If the user typed
+        // something else while the request was running, preserve it.
+        if (_controller.text.trim() == text) {
+          _controller.clear();
+          _hasText = false;
+        }
+
+        // Do not clear a newer reply selection.
+        if (identical(_replyTo, replyAtSend)) {
+          _replyTo = null;
+        }
       });
 
-      await _rememberPreview(
-        plaintext: plaintext,
-        isMe: true,
-        messageId: inserted['id']?.toString(),
-        createdAt: inserted['created_at'],
-      );
-    } catch (e) {
+      _scrollHelper.scrollToBottom();
+
+      try {
+        await _rememberPreview(
+          plaintext: plaintext,
+          isMe: true,
+          messageId: inserted['id']?.toString(),
+          createdAt: inserted['created_at'],
+        );
+      } catch (e) {
+        // The message was sent successfully. A preview failure must not
+        // make the send appear to have failed or encourage duplicate sends.
+        debugPrint('Failed to remember sent message preview: $e');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Message send failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
 
       _safeSetState(() {
-        _messages.removeWhere(
-          (m) => m['id'] is String && (m['id'] as String).startsWith('temp_'),
-        );
+        if (tempId != null) {
+          _messages.removeWhere((m) => m['id'] == tempId);
+        }
+
+        // Keep the text and reply selection so the user can retry.
         _error = 'Грешка при изпращане: $e';
+        _hasText = _controller.text.trim().isNotEmpty;
       });
     } finally {
       if (mounted) {
-        _safeSetState(() => _sending = false);
+        _safeSetState(() {
+          _sending = false;
+        });
       }
     }
   }
@@ -117,6 +146,8 @@ extension _ChatPageComposer on _ChatPageState {
     final p = _pending;
     if (p == null || _sending || _uploadingMedia) return;
 
+    String? tempId;
+
     _safeSetState(() {
       _uploadingMedia = true;
       _error = null;
@@ -124,15 +155,13 @@ extension _ChatPageComposer on _ChatPageState {
     });
 
     try {
+      // Verify the peer key before uploading media.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        _safeSetState(() {
-          _error = 'Другият потребител няма public key';
-        });
-        return;
+        throw StateError('Другият потребител няма потвърден публичен ключ.');
       }
 
       final ref = await p.upload();
@@ -140,10 +169,10 @@ extension _ChatPageComposer on _ChatPageState {
 
       final media = MediaCrypto.tryParseEnvelope(ref.envelopeJson);
       final preview = _displayFromPlaintext(ref.envelopeJson);
-      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+
+      tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
 
       _safeSetState(() {
-        _pending = null;
         _messages.add({
           'id': tempId,
           'text': preview,
@@ -169,6 +198,7 @@ extension _ChatPageComposer on _ChatPageState {
 
       _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
+
         if (i != -1) {
           _messages[i] = {
             ...inserted,
@@ -179,20 +209,45 @@ extension _ChatPageComposer on _ChatPageState {
             'reactions': <Map<String, dynamic>>[],
           };
         }
+
+        // Remove the attachment from the composer only after the message
+        // has been accepted by the message service.
+        if (identical(_pending, p)) {
+          _pending = null;
+        }
       });
 
-      await _rememberPreview(
-        plaintext: ref.envelopeJson,
-        isMe: true,
-        messageId: inserted['id']?.toString(),
-        createdAt: inserted['created_at'],
-      );
-    } catch (e) {
+      _scrollHelper.scrollToBottom();
+
+      try {
+        await _rememberPreview(
+          plaintext: ref.envelopeJson,
+          isMe: true,
+          messageId: inserted['id']?.toString(),
+          createdAt: inserted['created_at'],
+        );
+      } catch (e) {
+        debugPrint('Failed to remember media message preview: $e');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Media send failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (!mounted) return;
-      _safeSetState(() => _error = 'Медия: $e');
+
+      _safeSetState(() {
+        if (tempId != null) {
+          _messages.removeWhere((m) => m['id'] == tempId);
+        }
+
+        // Keep the pending attachment so the user can retry.
+        _error = 'Медия: $e';
+      });
     } finally {
       if (mounted) {
-        _safeSetState(() => _uploadingMedia = false);
+        _safeSetState(() {
+          _uploadingMedia = false;
+        });
       }
     }
   }
@@ -200,21 +255,21 @@ extension _ChatPageComposer on _ChatPageState {
   Future<void> _onVoiceRecorded(VoiceRecording rec) async {
     if (_sending || _uploadingMedia) return;
 
+    String? tempId;
+
     _safeSetState(() {
       _uploadingMedia = true;
       _error = null;
     });
 
     try {
+      // Verify the peer key before uploading the voice recording.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
       final theirKey = _theirPublicKey;
       if (theirKey == null || theirKey.isEmpty) {
-        _safeSetState(() {
-          _error = 'Другият потребител няма public key';
-        });
-        return;
+        throw StateError('Другият потребител няма потвърден публичен ключ.');
       }
 
       final uploaded = await MediaService.uploadVoiceFile(
@@ -226,7 +281,8 @@ extension _ChatPageComposer on _ChatPageState {
 
       final media = MediaCrypto.tryParseEnvelope(uploaded.envelopeJson);
       final preview = _displayFromPlaintext(uploaded.envelopeJson);
-      final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
+
+      tempId = 'temp_${DateTime.now().microsecondsSinceEpoch}';
 
       _safeSetState(() {
         _messages.add({
@@ -253,6 +309,7 @@ extension _ChatPageComposer on _ChatPageState {
 
       _safeSetState(() {
         final i = _messages.indexWhere((m) => m['id'] == tempId);
+
         if (i != -1) {
           _messages[i] = {
             ...inserted,
@@ -265,19 +322,36 @@ extension _ChatPageComposer on _ChatPageState {
         }
       });
 
-      await _rememberPreview(
-        plaintext: uploaded.envelopeJson,
-        isMe: true,
-        messageId: inserted['id']?.toString(),
-        createdAt: inserted['created_at'],
-      );
-    } catch (e) {
+      _scrollHelper.scrollToBottom();
+
+      try {
+        await _rememberPreview(
+          plaintext: uploaded.envelopeJson,
+          isMe: true,
+          messageId: inserted['id']?.toString(),
+          createdAt: inserted['created_at'],
+        );
+      } catch (e) {
+        debugPrint('Failed to remember voice message preview: $e');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Voice message send failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+
       if (mounted) {
-        _safeSetState(() => _error = 'Глас: $e');
+        _safeSetState(() {
+          if (tempId != null) {
+            _messages.removeWhere((m) => m['id'] == tempId);
+          }
+
+          _error = 'Глас: $e';
+        });
       }
     } finally {
       if (mounted) {
-        _safeSetState(() => _uploadingMedia = false);
+        _safeSetState(() {
+          _uploadingMedia = false;
+        });
       }
     }
   }
@@ -303,6 +377,7 @@ extension _ChatPageComposer on _ChatPageState {
             name: name,
             mime: mime,
           );
+
           return UploadedMediaRef(u.envelopeJson);
         },
       );

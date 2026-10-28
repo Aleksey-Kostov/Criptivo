@@ -15,125 +15,149 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
     final myPublicKey = await KeyManager.getPublicKeyBase64();
 
-    if (myPublicKey == null || myPublicKey.isEmpty) {
-      if (!mounted) return;
+    if (!mounted) return;
 
+    if (myPublicKey == null || myPublicKey.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Липсва твоят public key')));
       return;
     }
 
-    final number = await SafetyNumber.generate(
-      myPublicKeyBase64: myPublicKey,
-      theirPublicKeyBase64: theirKey,
-    );
+    try {
+      final number = await SafetyNumber.generate(
+        myPublicKeyBase64: myPublicKey,
+        theirPublicKeyBase64: theirKey,
+      );
 
-    final formatted = SafetyNumber.format(number);
+      final formatted = SafetyNumber.format(number);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: CriptivoColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      isScrollControlled: true,
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: CriptivoColors.neon.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Safety Number',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: CriptivoColors.neon,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'с $_otherName',
-                style: const TextStyle(
-                  color: CriptivoColors.textSecondary,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: CriptivoColors.surfaceLight,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: CriptivoColors.neon.withValues(alpha: 0.2),
+      // Не показвай номер, изчислен с ключ, който вече е сменен.
+      if (_theirPublicKey != theirKey) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ключът на събеседника се промени. Опитай отново.'),
+          ),
+        );
+        return;
+      }
+
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: CriptivoColors.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: CriptivoColors.neon.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                child: const Text(
-                  'Сравни този номер с този на другия човек '
-                  '(на живо, по телефона или лично).\n'
-                  'Ако съвпадат — връзката е защитена.',
+                const SizedBox(height: 20),
+                const Text(
+                  'Safety Number',
                   style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: CriptivoColors.neon,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'с $_otherName',
+                  style: const TextStyle(
                     color: CriptivoColors.textSecondary,
-                    fontSize: 13,
-                    height: 1.45,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: CriptivoColors.surfaceLight,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: CriptivoColors.neon.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: const Text(
+                    'Сравни този номер с номера на другия човек '
+                    '(на живо, по телефона или лично). '
+                    'Съвпадението помага да потвърдите, че използвате '
+                    'едни и същи публични ключове. Само показването на '
+                    'номера не потвърждава самоличността.',
+                    style: TextStyle(
+                      color: CriptivoColors.textSecondary,
+                      fontSize: 13,
+                      height: 1.45,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SelectableText(
+                  formatted,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 17,
+                    letterSpacing: 1.1,
+                    height: 1.55,
+                    color: CriptivoColors.textPrimary,
+                    fontWeight: FontWeight.w500,
                   ),
                   textAlign: TextAlign.center,
                 ),
-              ),
-              const SizedBox(height: 24),
-              SelectableText(
-                formatted,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 17,
-                  letterSpacing: 1.1,
-                  height: 1.55,
-                  color: CriptivoColors.textPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: formatted));
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: formatted));
 
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Safety Number копиран'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.copy_rounded, size: 18),
-                  label: const Text('Копирай номера'),
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Safety Number копиран'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('Копирай номера'),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Затвори'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Затвори'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      debugPrint('Safety Number generation failed: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Safety Number не можа да бъде генериран.'),
+        ),
+      );
+    }
   }
 
   // ── Realtime + Polling ───────────────────────
@@ -154,19 +178,38 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             if (row['conversation_id'] != widget.conversationId) return;
 
             final id = row['id'];
+            final senderId = row['sender_id'];
+
+            if (id == null || senderId == null) return;
+
+            // Fail closed: only accept incoming messages from the expected peer.
+            final expectedPeerId = _otherUserId;
+            if (expectedPeerId == null || senderId != expectedPeerId) return;
+
             if (_messages.any((m) => m['id'] == id)) return;
 
             final myId = AuthService.currentUser?.id;
-            final isMe = row['sender_id'] == myId;
+            if (myId == null || senderId == myId) return;
 
-            if (isMe) return;
+            final ciphertext = row['ciphertext'];
+            final nonce = row['nonce'];
+
+            if (ciphertext is! String ||
+                ciphertext.isEmpty ||
+                nonce is! String ||
+                nonce.isEmpty) {
+              debugPrint(
+                'Ignoring message with invalid encrypted payload: $id',
+              );
+              return;
+            }
 
             String plaintext;
 
             try {
-              if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
-                await _refreshTheirPublicKey();
-              }
+              // Refresh from the profile before decrypting so a cached peer
+              // key is not silently reused for a new incoming message.
+              await _refreshTheirPublicKey();
 
               if (!mounted) return;
 
@@ -176,10 +219,16 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
                 plaintext = '[липсва ключ]';
               } else {
                 plaintext = await MessageCrypto.decrypt(
-                  ciphertextBase64: row['ciphertext'] as String,
-                  nonceBase64: row['nonce'] as String,
+                  ciphertextBase64: ciphertext,
+                  nonceBase64: nonce,
                   theirPublicKeyBase64: theirKey,
                 );
+
+                if (!mounted) return;
+
+                // Do not apply a result calculated with a key that changed
+                // while the asynchronous decryption was running.
+                if (_theirPublicKey != theirKey) return;
               }
             } catch (e) {
               plaintext = '[не може да се декриптира]';
@@ -188,21 +237,30 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
             if (!mounted) return;
 
-            final msg = _messageFromPlaintext(row, plaintext, isMe);
+            // Recheck after awaits: polling and realtime may deliver the same
+            // message concurrently.
+            if (_messages.any((m) => m['id'] == id)) return;
+
+            final msg = _messageFromPlaintext(row, plaintext, false);
 
             _safeSetState(() => _messages.add(msg));
 
             await _rememberPreview(
               plaintext: plaintext,
               isMe: false,
-              messageId: row['id']?.toString(),
+              messageId: id.toString(),
               createdAt: row['created_at'],
             );
 
             if (!mounted) return;
 
             _scrollHelper.onIncomingMessage();
-            await ChatService.markMessagesAsRead(widget.conversationId);
+
+            try {
+              await ChatService.markMessagesAsRead(widget.conversationId);
+            } catch (e) {
+              debugPrint('Mark incoming message as read failed: $e');
+            }
           },
         )
         .onPostgresChanges(
@@ -242,7 +300,11 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             if (messageId == null) return;
             if (!_messages.any((m) => m['id'] == messageId)) return;
 
-            await _refreshReactionsForMessage(messageId);
+            try {
+              await _refreshReactionsForMessage(messageId);
+            } catch (e) {
+              debugPrint('Realtime reaction refresh failed: $e');
+            }
           },
         )
         .subscribe((status, [err]) {
@@ -264,32 +326,56 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
   Future<void> _loadMessagesQuiet() async {
     try {
+      // Recover if the peer key is currently unavailable. If refresh fails,
+      // leave the existing message list intact instead of replacing it with
+      // misleading decryption placeholders.
+      if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
+        await _refreshTheirPublicKey();
+      }
+
+      if (!mounted) return;
+
+      final theirKey = _theirPublicKey;
+      if (theirKey == null || theirKey.isEmpty) return;
+
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
 
       for (final row in rows) {
+        if (!mounted) return;
+
         final isMe = row['sender_id'] == myId;
         String plaintext;
 
         try {
-          final theirKey = _theirPublicKey;
+          final ciphertext = row['ciphertext'];
+          final nonce = row['nonce'];
 
-          if (theirKey == null || theirKey.isEmpty) {
-            plaintext = '[липсва ключ]';
-          } else {
-            plaintext = await MessageCrypto.decrypt(
-              ciphertextBase64: row['ciphertext'],
-              nonceBase64: row['nonce'],
-              theirPublicKeyBase64: theirKey,
-            );
+          if (ciphertext is! String ||
+              ciphertext.isEmpty ||
+              nonce is! String ||
+              nonce.isEmpty) {
+            throw const FormatException('Invalid encrypted message payload.');
           }
-        } catch (_) {
+
+          plaintext = await MessageCrypto.decrypt(
+            ciphertextBase64: ciphertext,
+            nonceBase64: nonce,
+            theirPublicKeyBase64: theirKey,
+          );
+        } catch (e) {
           plaintext = '[не може да се декриптира]';
+          debugPrint('Quiet poll decrypt error: $e');
         }
 
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
       }
+
+      if (!mounted) return;
+
+      // If the key changed during the batch, discard this stale result.
+      if (_theirPublicKey != theirKey) return;
 
       await _attachReactions(decrypted);
 
@@ -347,32 +433,57 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
     });
 
     try {
+      if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
+        await _refreshTheirPublicKey();
+      }
+
+      if (!mounted) return;
+
+      final theirKey = _theirPublicKey;
+      if (theirKey == null || theirKey.isEmpty) {
+        throw StateError('The peer public key is unavailable.');
+      }
+
       final rows = await ChatService.getMessages(widget.conversationId);
       final myId = AuthService.currentUser?.id;
       final decrypted = <Map<String, dynamic>>[];
 
       for (final row in rows) {
+        if (!mounted) return;
+
         final isMe = row['sender_id'] == myId;
         String plaintext;
 
         try {
-          final theirKey = _theirPublicKey;
+          final ciphertext = row['ciphertext'];
+          final nonce = row['nonce'];
 
-          if (theirKey == null || theirKey.isEmpty) {
-            plaintext = '[липсва ключ]';
-          } else {
-            plaintext = await MessageCrypto.decrypt(
-              ciphertextBase64: row['ciphertext'],
-              nonceBase64: row['nonce'],
-              theirPublicKeyBase64: theirKey,
-            );
+          if (ciphertext is! String ||
+              ciphertext.isEmpty ||
+              nonce is! String ||
+              nonce.isEmpty) {
+            throw const FormatException('Invalid encrypted message payload.');
           }
+
+          plaintext = await MessageCrypto.decrypt(
+            ciphertextBase64: ciphertext,
+            nonceBase64: nonce,
+            theirPublicKeyBase64: theirKey,
+          );
         } catch (e) {
           plaintext = '[не може да се декриптира]';
           debugPrint('Decrypt error: $e');
         }
 
         decrypted.add(_messageFromPlaintext(row, plaintext, isMe));
+      }
+
+      if (!mounted) return;
+
+      if (_theirPublicKey != theirKey) {
+        throw StateError(
+          'The peer public key changed while messages were loading.',
+        );
       }
 
       await _attachReactions(decrypted);

@@ -3,10 +3,25 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../crypto/key_manager.dart';
 
+/// Резултат от sync на public key — за UI.
+enum KeySyncStatus {
+  /// Локалният ключ = сървърния (или сървърът беше празен и го записахме).
+  ok,
+
+  /// Локално има ключове, на сървъра — друг public key.
+  /// НЕ презаписваме. Трябва restore от backup.
+  mismatch,
+
+  /// Няма локален public key.
+  missingLocal,
+}
+
 class AuthService {
   static final _supabase = Supabase.instance.client;
 
-  /// Проверява дали username е свободен (case-insensitive).
+  /// Последен статус след [syncPublicKeyToProfile] (за Settings / banner).
+  static KeySyncStatus lastKeySyncStatus = KeySyncStatus.ok;
+
   static Future<bool> isUsernameAvailable(String username) async {
     final normalized = username.trim().toLowerCase();
     if (normalized.isEmpty) return false;
@@ -20,7 +35,6 @@ class AuthService {
     return row == null;
   }
 
-  /// Регистрация
   static Future<AuthResponse> signUp({
     required String email,
     required String password,
@@ -29,19 +43,16 @@ class AuthService {
   }) async {
     final normalizedUsername = username.trim().toLowerCase();
 
-    // 1) Username свободен ли е?
     final available = await isUsernameAvailable(normalizedUsername);
     if (!available) {
       throw StateError('Този username вече е зает');
     }
 
-    // 2) Ключове — създаваме само ако липсват
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
 
     final publicKey = await KeyManager.getPublicKeyBase64();
-
     if (publicKey == null || publicKey.isEmpty) {
       throw StateError(
         'Криптографските ключове не са налични. '
@@ -49,7 +60,6 @@ class AuthService {
       );
     }
 
-    // 3) Регистрация в Supabase Auth
     final response = await _supabase.auth.signUp(
       email: email,
       password: password,
@@ -59,9 +69,7 @@ class AuthService {
       },
     );
 
-    // 4) Публикуваме public key + username в профила
     final user = response.user;
-
     if (user != null) {
       await _supabase.from('profiles').update({
         'public_key': publicKey,
@@ -70,14 +78,11 @@ class AuthService {
       }).eq('id', user.id);
     }
 
+    lastKeySyncStatus = KeySyncStatus.ok;
     return response;
   }
 
-  /// Вход
-  ///
-  /// ВАЖНО:
-  /// Входът не генерира нови криптографски ключове.
-  /// Public key-ът се синхронизира отделно чрез [syncPublicKeyToProfile].
+  /// Вход — НЕ генерира ключове. Sync е внимателен (виж [syncPublicKeyToProfile]).
   static Future<AuthResponse> signIn({
     required String email,
     required String password,
@@ -94,38 +99,86 @@ class AuthService {
     return response;
   }
 
-  /// Качва текущия локален public key в профила.
-  static Future<void> syncPublicKeyToProfile() async {
+  /// Синхронизация на public key.
+  ///
+  /// - Ако на сървъра няма ключ → записваме локалния.
+  /// - Ако локалният == сървърния → OK.
+  /// - Ако се различават → **НЕ презаписваме** (иначе чупим старите съобщения
+  ///   и другите устройства). Връща [KeySyncStatus.mismatch].
+  static Future<KeySyncStatus> syncPublicKeyToProfile() async {
     final user = currentUser;
-    if (user == null) return;
+    if (user == null) {
+      lastKeySyncStatus = KeySyncStatus.missingLocal;
+      return lastKeySyncStatus;
+    }
 
-    final publicKey = await KeyManager.getPublicKeyBase64();
-    if (publicKey == null || publicKey.isEmpty) {
+    final local = await KeyManager.getPublicKeyBase64();
+    if (local == null || local.isEmpty) {
       debugPrint('syncPublicKeyToProfile: няма локален public key');
-      return;
+      lastKeySyncStatus = KeySyncStatus.missingLocal;
+      return lastKeySyncStatus;
     }
 
     try {
-      await _supabase
+      final row = await _supabase
           .from('profiles')
-          .update({'public_key': publicKey})
-          .eq('id', user.id);
+          .select('public_key')
+          .eq('id', user.id)
+          .maybeSingle();
 
-      debugPrint('Public key синхронизиран: $publicKey');
+      final remote = row?['public_key'] as String?;
+
+      if (remote == null || remote.isEmpty) {
+        await _supabase
+            .from('profiles')
+            .update({'public_key': local})
+            .eq('id', user.id);
+        debugPrint('Public key записан (сървърът беше празен): $local');
+        lastKeySyncStatus = KeySyncStatus.ok;
+        return lastKeySyncStatus;
+      }
+
+      if (remote == local) {
+        debugPrint('Public key OK (локален == сървър): $local');
+        lastKeySyncStatus = KeySyncStatus.ok;
+        return lastKeySyncStatus;
+      }
+
+      // MISMATCH — критично: не пипаме сървъра
+      debugPrint(
+        'Key MISMATCH: local=$local remote=$remote — '
+        'нужен е Key Backup restore. Сървърният ключ НЕ е презаписан.',
+      );
+      lastKeySyncStatus = KeySyncStatus.mismatch;
+      return lastKeySyncStatus;
     } catch (e) {
       debugPrint('Грешка при sync на public key: $e');
+      lastKeySyncStatus = KeySyncStatus.missingLocal;
+      return lastKeySyncStatus;
     }
   }
 
-  /// Изход
+  /// След успешен import на backup — форсира запис на локалния ключ към профила.
+  static Future<void> forcePublishLocalPublicKey() async {
+    final user = currentUser;
+    if (user == null) return;
+    final local = await KeyManager.getPublicKeyBase64();
+    if (local == null || local.isEmpty) return;
+
+    await _supabase
+        .from('profiles')
+        .update({'public_key': local})
+        .eq('id', user.id);
+    lastKeySyncStatus = KeySyncStatus.ok;
+    debugPrint('Public key force-published: $local');
+  }
+
   static Future<void> signOut() async {
     await _supabase.auth.signOut();
   }
 
-  /// Текущ потребител
   static User? get currentUser => _supabase.auth.currentUser;
 
-  /// Stream за промени в състоянието на удостоверяването
   static Stream<AuthState> get authStateChanges =>
       _supabase.auth.onAuthStateChange;
 }

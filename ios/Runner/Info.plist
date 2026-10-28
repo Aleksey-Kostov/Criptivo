@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>За криптирани гласови съобщения в Criptivo</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>За изпращане на снимки и видео в чата</string>
-    <key>NSCameraUsageDescription</key>
-    <string>За снимане директно от чата</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -30,8 +24,23 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>https</string>
+		<string>http</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Criptivo използва камерата за снимки и видео в чата.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Criptivo използва микрофона за криптирани гласови съобщения.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Criptivo може да запазва получени медии във вашата галерия.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Criptivo достъпва галерията за изпращане на снимки, видео и файлове.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

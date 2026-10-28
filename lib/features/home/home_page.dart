@@ -6,7 +6,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
 import '../../core/chat/conversation_preview_store.dart';
-import '../../core/crypto/key_manager.dart';
 import '../../core/theme/criptivo_theme.dart';
 import '../chat/chat_page.dart';
 import '../chat/new_chat_page.dart';
@@ -52,24 +51,36 @@ class _HomePageState extends State<HomePage> {
     _startPoll();
   }
 
+  /// Безопасна синхронизация на ключа.
+  ///
+  /// Не генерира нова самоличност и не презаписва съществуващия
+  /// сървърен публичен ключ. При несъответствие е необходимо
+  /// възстановяване на правилния ключ от backup.
   Future<void> _forceSyncKey() async {
-    final user = AuthService.currentUser;
-    if (user == null) return;
-
     try {
-      await KeyManager.ensureKeys();
-      final local = await KeyManager.getPublicKeyBase64();
-      if (local == null) return;
+      final status = await AuthService.syncPublicKeyToProfile();
 
-      await Supabase.instance.client
-          .from('profiles')
-          .update({
-            'public_key': local,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('id', user.id);
+      switch (status) {
+        case KeySyncStatus.ok:
+          debugPrint('Criptivo: public key sync OK.');
+          break;
+        case KeySyncStatus.mismatch:
+          debugPrint(
+            'Criptivo: public key mismatch. '
+            'Сървърният ключ не е променен. '
+            'Провери и възстанови ключа от backup.',
+          );
+          break;
+        case KeySyncStatus.missingLocal:
+          debugPrint(
+            'Criptivo: локалният публичен ключ липсва '
+            'или синхронизацията не е успешна. '
+            'Не се генерира автоматично нова самоличност.',
+          );
+          break;
+      }
     } catch (e) {
-      debugPrint('Key sync failed: $e');
+      debugPrint('Безопасната синхронизация на ключа се провали: $e');
     }
   }
 

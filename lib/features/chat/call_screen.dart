@@ -164,9 +164,8 @@ class _CallScreenState extends State<CallScreen> {
   void _showError(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _statusText(ActiveCall? call) {
@@ -254,9 +253,7 @@ class _CallScreenState extends State<CallScreen> {
                         objectFit:
                             RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                       )
-                    : const Center(
-                        child: CircularProgressIndicator(),
-                      ),
+                    : const Center(child: CircularProgressIndicator()),
               ),
             if (!isVideo || !active)
               Positioned.fill(
@@ -270,9 +267,7 @@ class _CallScreenState extends State<CallScreen> {
                         radius: 48,
                         backgroundColor: CriptivoColors.surfaceLight,
                         child: Icon(
-                          isVideo
-                              ? Icons.videocam_rounded
-                              : Icons.call_rounded,
+                          isVideo ? Icons.videocam_rounded : Icons.call_rounded,
                           color: CriptivoColors.neon,
                           size: 42,
                         ),
@@ -309,8 +304,7 @@ class _CallScreenState extends State<CallScreen> {
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     color: CriptivoColors.surfaceLight,
-                    child: _cameraOff ||
-                            _localRenderer.srcObject == null
+                    child: _cameraOff || _localRenderer.srcObject == null
                         ? const Center(
                             child: Icon(
                               Icons.videocam_off_rounded,
@@ -447,13 +441,7 @@ class _ActionButton extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-          ),
-        ),
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
       ],
     );
   }

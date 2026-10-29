@@ -37,7 +37,7 @@ dependencies:
   visibility_detector: ^0.4.0+2
 
   # Voice
-  record: ^5.2.0
+  record: ^6.2.1
   path_provider: ^2.1.5
   permission_handler: ^11.3.1
   flutter_webrtc: ^0.12.12
@@ -45,6 +45,9 @@ dependencies:
   # Open / share
   open_filex: ^4.5.0
   share_plus: ^10.1.4
+  rust_lib_criptivo:
+    path: rust_builder
+  flutter_rust_bridge: 2.13.0
 
 dev_dependencies:
   flutter_test:

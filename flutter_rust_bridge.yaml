@@ -1,0 +1,5 @@
+
+rust_input: crate::api
+rust_root: native/criptivo_mls
+dart_output: lib/src/rust
+rust_output: native/criptivo_mls/src/frb_generated.rs

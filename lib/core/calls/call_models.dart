@@ -2,15 +2,7 @@ import 'package:flutter/foundation.dart';
 
 enum CallKind { voice, video }
 
-enum CallStatus {
-  idle,
-  outgoing,
-  incoming,
-  connecting,
-  active,
-  ending,
-  ended,
-}
+enum CallStatus { idle, outgoing, incoming, connecting, active, ending, ended }
 
 enum CallEndReason {
   localHangup,
@@ -22,16 +14,7 @@ enum CallEndReason {
   network,
 }
 
-enum CallSignalType {
-  invite,
-  accept,
-  reject,
-  hangup,
-  offer,
-  answer,
-  ice,
-  busy,
-}
+enum CallSignalType { invite, accept, reject, hangup, offer, answer, ice, busy }
 
 @immutable
 class CallSignal {
@@ -56,15 +39,15 @@ class CallSignal {
   });
 
   Map<String, dynamic> toJson() => {
-        'type': type.name,
-        'call_id': callId,
-        'conversation_id': conversationId,
-        'from': fromUserId,
-        'kind': kind.name,
-        if (sdp != null) 'sdp': sdp,
-        if (candidate != null) 'candidate': candidate,
-        'ts': ts,
-      };
+    'type': type.name,
+    'call_id': callId,
+    'conversation_id': conversationId,
+    'from': fromUserId,
+    'kind': kind.name,
+    if (sdp != null) 'sdp': sdp,
+    if (candidate != null) 'candidate': candidate,
+    'ts': ts,
+  };
 
   static CallSignal? tryParse(dynamic raw) {
     if (raw is! Map) return null;

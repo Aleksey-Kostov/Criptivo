@@ -46,3 +46,14 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Rust build artifacts
+**/target/
+
+# Rust generated files
+**/*.rs.bk
+
+# Local environment files
+.env
+.env.*
+!.env.example

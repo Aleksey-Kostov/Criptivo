@@ -1,0 +1,18 @@
+
+[package]
+name = "criptivo_mls"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+name = "criptivo_mls"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+openmls = { version = "0.9.0", features = ["sqlite-provider"] }
+openmls_rust_crypto = "0.6.0"
+openmls_basic_credential = "0.6.0"
+
+[dev-dependencies]

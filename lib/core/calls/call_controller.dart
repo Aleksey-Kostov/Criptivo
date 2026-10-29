@@ -19,6 +19,7 @@ class CallController extends ChangeNotifier {
 
   ActiveCall? _call;
   CallSignalingService? _signaling;
+  String? _signalingConversationId;
   Timer? _ringTimer;
 
   bool _disposed = false;
@@ -78,6 +79,14 @@ class CallController extends ChangeNotifier {
       throw StateError('Не можеш да се обадиш на собствения си акаунт.');
     }
 
+    if (conversationId.trim().isEmpty) {
+      throw ArgumentError.value(
+        conversationId,
+        'conversationId',
+        'Идентификаторът на разговора не може да е празен.',
+      );
+    }
+
     final callId = _uuid.v4();
 
     _call = ActiveCall(
@@ -100,7 +109,7 @@ class CallController extends ChangeNotifier {
       if (!_isCurrentCall(callId)) return;
 
       final signaling = _signaling;
-      if (signaling == null) {
+      if (signaling == null || _signalingConversationId != conversationId) {
         throw StateError('Сигнализацията не е готова.');
       }
 
@@ -148,7 +157,8 @@ class CallController extends ChangeNotifier {
 
     try {
       final signaling = _signaling;
-      if (signaling == null) {
+      if (signaling == null ||
+          _signalingConversationId != current.conversationId) {
         throw StateError('Сигнализацията не е готова.');
       }
 
@@ -182,7 +192,8 @@ class CallController extends ChangeNotifier {
 
     try {
       final signaling = _signaling;
-      if (signaling != null) {
+      if (signaling != null &&
+          _signalingConversationId == current.conversationId) {
         await signaling.send(
           CallSignal(
             type: CallSignalType.reject,
@@ -221,7 +232,8 @@ class CallController extends ChangeNotifier {
 
     try {
       final signaling = _signaling;
-      if (signaling != null) {
+      if (signaling != null &&
+          _signalingConversationId == current.conversationId) {
         await signaling.send(
           CallSignal(
             type: CallSignalType.hangup,
@@ -267,7 +279,8 @@ class CallController extends ChangeNotifier {
     }
 
     final signaling = _signaling;
-    if (signaling == null) {
+    if (signaling == null ||
+        _signalingConversationId != current.conversationId) {
       throw StateError('Сигнализацията не е готова.');
     }
 
@@ -305,7 +318,8 @@ class CallController extends ChangeNotifier {
     }
 
     final signaling = _signaling;
-    if (signaling == null) {
+    if (signaling == null ||
+        _signalingConversationId != current.conversationId) {
       throw StateError('Сигнализацията не е готова.');
     }
 
@@ -345,12 +359,13 @@ class CallController extends ChangeNotifier {
   }
 
   Future<void> _ensureSignaling(String conversationId) async {
-    if (_signaling != null && _call?.conversationId == conversationId) {
+    if (_signaling != null && _signalingConversationId == conversationId) {
       return;
     }
 
     final oldSignaling = _signaling;
     _signaling = null;
+    _signalingConversationId = null;
 
     await oldSignaling?.dispose();
 
@@ -360,6 +375,7 @@ class CallController extends ChangeNotifier {
     );
 
     _signaling = signaling;
+    _signalingConversationId = conversationId;
 
     try {
       await signaling.start();
@@ -370,6 +386,7 @@ class CallController extends ChangeNotifier {
     } catch (_) {
       if (identical(_signaling, signaling)) {
         _signaling = null;
+        _signalingConversationId = null;
       }
 
       await signaling.dispose();
@@ -409,6 +426,13 @@ class CallController extends ChangeNotifier {
           return;
         }
 
+        // An invitation must belong to the conversation whose
+        // signaling channel is currently attached.
+        if (_signaling == null ||
+            signal.conversationId != _signalingConversationId) {
+          return;
+        }
+
         final current = _call;
 
         // Ignore duplicate invitations for the same call.
@@ -419,7 +443,8 @@ class CallController extends ChangeNotifier {
 
         if (hasActiveCall) {
           final signaling = _signaling;
-          if (signaling != null) {
+          if (signaling != null &&
+              _signalingConversationId == signal.conversationId) {
             await signaling.send(
               CallSignal(
                 type: CallSignalType.busy,
@@ -431,12 +456,6 @@ class CallController extends ChangeNotifier {
               ),
             );
           }
-          return;
-        }
-
-        // The invitation must match the subscribed conversation.
-        if (_signaling == null ||
-            signal.conversationId != _callConversationIdForSignaling()) {
           return;
         }
 
@@ -476,13 +495,15 @@ class CallController extends ChangeNotifier {
           throw StateError('WebRTC offer обработчикът не е настроен.');
         }
 
-        // CallMediaBridge creates and sends the offer through sendSdp().
-        await offerCallback(current.kind);
+        // CallMediaBridge creates the offer; the controller sends it.
+        final offer = await offerCallback(current.kind);
 
         if (!_isCurrentCall(signal.callId)) return;
 
-        // Wait for the WebRTC connection-state callback before marking
-        // the call as active.
+        await sendSdp(isOffer: true, sdp: offer);
+
+        // Wait for WebRTC's connection-state callback before
+        // marking the call as active.
         return;
 
       case CallSignalType.reject:
@@ -527,7 +548,9 @@ class CallController extends ChangeNotifier {
 
         final answer = await answerCallback(signal.sdp!);
 
-        if (!_isCurrentCall(signal.callId) || answer == null) return;
+        if (!_isCurrentCall(signal.callId) || answer == null) {
+          return;
+        }
 
         await sendSdp(isOffer: false, sdp: answer);
 
@@ -575,10 +598,6 @@ class CallController extends ChangeNotifier {
         await iceCallback(signal.candidate!);
         return;
     }
-  }
-
-  String? _callConversationIdForSignaling() {
-    return _call?.conversationId;
   }
 
   bool _isMatchingSignal(CallSignal signal) {
@@ -651,6 +670,7 @@ class CallController extends ChangeNotifier {
 
     final signaling = _signaling;
     _signaling = null;
+    _signalingConversationId = null;
 
     await signaling?.dispose();
   }
@@ -663,6 +683,7 @@ class CallController extends ChangeNotifier {
 
     final signaling = _signaling;
     _signaling = null;
+    _signalingConversationId = null;
 
     if (signaling != null) {
       unawaited(signaling.dispose());

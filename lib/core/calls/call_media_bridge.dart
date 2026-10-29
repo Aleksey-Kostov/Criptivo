@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'call_controller.dart';
@@ -93,10 +92,7 @@ class CallMediaBridge {
     controller.onHangupMedia = _stopSession;
   }
 
-  Future<void> _ensureStarted(
-    CallKind kind,
-    CallController controller,
-  ) async {
+  Future<void> _ensureStarted(CallKind kind, CallController controller) async {
     final call = controller.call;
     if (call == null) {
       throw StateError('Няма активен разговор.');
@@ -108,9 +104,7 @@ class CallMediaBridge {
 
     // Не допускай две едновременни инициализации.
     while (_starting) {
-      await Future<void>.delayed(
-        const Duration(milliseconds: 30),
-      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
 
       if (_session != null && _callId == call.callId) {
         return;
@@ -169,8 +163,7 @@ class CallMediaBridge {
             controller.markConnected();
           } else if (state ==
                   RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-              state ==
-                  RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+              state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
             unawaited(controller.hangUp());
           }
         }),

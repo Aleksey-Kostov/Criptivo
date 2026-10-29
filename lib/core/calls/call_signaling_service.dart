@@ -7,9 +7,12 @@ import '../auth/auth_service.dart';
 import 'call_models.dart';
 
 /// Сигнализация за 1:1 разговори.
-/// Каналът е private, а достъпът се ограничава и чрез Supabase RLS.
-/// През него се изпращат само control съобщения, SDP и ICE —
-/// никога аудио/видео потоци или лични съобщения.
+///
+/// Чрез канала се изпращат control съобщения, SDP и ICE кандидати.
+/// Аудио и видео потоците не се изпращат през Supabase Broadcast.
+///
+/// Private каналът и клиентските проверки не заместват правилно
+/// конфигурираните Supabase Realtime Authorization/RLS политики.
 class CallSignalingService {
   CallSignalingService({required this.conversationId, required this.onSignal});
 
@@ -22,40 +25,68 @@ class CallSignalingService {
 
   RealtimeChannel? _channel;
   bool _joined = false;
-  bool _starting = false;
+
+  bool _disposed = false;
+
+  int _lifecycleGeneration = 0;
+  Future<void>? _startFuture;
 
   String? _myId;
-  Set<String> _participantIds = {};
+  Set<String> _participantIds = <String>{};
 
   String get _topic => 'call:$conversationId';
 
   Future<void> start() async {
+    if (_disposed) {
+      throw StateError('Услугата за сигнализация вече е затворена.');
+    }
+
     if (_joined) return;
 
-    // Изчакваме евентуален текущ опит за свързване.
-    while (_starting) {
-      await Future<void>.delayed(const Duration(milliseconds: 25));
+    final existingStart = _startFuture;
+    if (existingStart != null) {
+      await existingStart;
       if (_joined) return;
     }
 
-    _starting = true;
+    final generation = _lifecycleGeneration;
+    final future = _startInternal(generation);
 
+    _startFuture = future;
+
+    try {
+      await future;
+    } finally {
+      if (identical(_startFuture, future)) {
+        _startFuture = null;
+      }
+    }
+  }
+
+  Future<void> _startInternal(int generation) async {
     RealtimeChannel? channel;
 
     try {
-      final myId = AuthService.currentUser?.id;
+      _ensureCurrent(generation);
 
-      if (myId == null) {
+      final myId = AuthService.currentUser?.id;
+      if (myId == null || myId.isEmpty) {
         throw StateError('Трябва да си влязъл в акаунта.');
       }
 
-      // Проверка в приложението — допълнителна защита,
-      // но не замества RLS политиките в Supabase.
+      if (conversationId.trim().isEmpty) {
+        throw StateError('Липсва идентификатор на разговора.');
+      }
+
+      // Това е допълнителна проверка в приложението.
+      // Реалният контрол на достъпа трябва да се прилага и от сървъра.
       final conversation = await _supabase
           .from('conversations')
           .select('participant_1, participant_2')
           .eq('id', conversationId)
           .maybeSingle();
+
+      _ensureCurrent(generation);
 
       if (conversation == null) {
         throw StateError('Разговорът не беше намерен.');
@@ -69,7 +100,7 @@ class CallSignalingService {
         if (p2 != null && p2.isNotEmpty) p2,
       };
 
-      if (!participants.contains(myId) || participants.length != 2) {
+      if (participants.length != 2 || !participants.contains(myId)) {
         throw StateError('Нямаш право да участваш в този разговор.');
       }
 
@@ -84,31 +115,47 @@ class CallSignalingService {
       channel.onBroadcast(
         event: 'signal',
         callback: (payload) {
+          if (!_isCurrent(generation) ||
+              !_joined && !identical(_channel, channel)) {
+            return;
+          }
+
           try {
             final raw = payload['payload'] ?? payload;
             final signal = CallSignal.tryParse(raw);
 
             if (signal == null) return;
-
-            // Проверки за невалидни и несвързани сигнали.
             if (signal.conversationId != conversationId) return;
+            if (signal.callId.trim().isEmpty) return;
+
+            // Не обработваме собствени съобщения или сигнали от
+            // потребител, който не е участник в разговора.
             if (signal.fromUserId == _myId) return;
             if (!_participantIds.contains(signal.fromUserId)) return;
 
+            // SDP/ICE сигналите трябва да носят подходящ payload.
+            if (!_hasValidPayload(signal)) return;
+
             onSignal(signal);
-          } catch (e) {
-            debugPrint('Call signal parse error: $e');
+          } catch (error, stackTrace) {
+            debugPrint('Call signaling callback failed: $error');
+            debugPrintStack(stackTrace: stackTrace);
           }
         },
       );
 
       _channel = channel;
 
-      // subscribe() връща RealtimeChannel, а не статуса на абониране.
-      // Реалният статус пристига чрез callback.
       final subscribed = Completer<void>();
 
       channel.subscribe((status, [error]) {
+        if (!_isCurrent(generation)) {
+          if (!subscribed.isCompleted) {
+            subscribed.completeError(StateError('Абонирането е отменено.'));
+          }
+          return;
+        }
+
         if (status == RealtimeSubscribeStatus.subscribed) {
           if (!subscribed.isCompleted) {
             subscribed.complete();
@@ -122,8 +169,8 @@ class CallSignalingService {
           if (!subscribed.isCompleted) {
             subscribed.completeError(
               StateError(
-                'Абонирането за защитения канал се провали '
-                '($status)${error == null ? '' : ': $error'}',
+                'Абонирането за канала се провали: '
+                '$status${error == null ? '' : ' — $error'}',
               ),
             );
           }
@@ -134,20 +181,33 @@ class CallSignalingService {
         await subscribed.future.timeout(_subscribeTimeout);
       } on TimeoutException {
         throw StateError(
-          'Изтече времето за свързване със защитения канал за разговори.',
+          'Изтече времето за свързване със сигнализационния канал.',
         );
-      } catch (_) {
-        throw StateError(
-          'Защитеният канал за разговори не можа да бъде отворен.',
-        );
+      } catch (error) {
+        if (!_isCurrent(generation)) {
+          throw StateError('Стартирането на сигнализацията е отменено.');
+        }
+
+        if (error is StateError) rethrow;
+
+        throw StateError('Сигнализационният канал не можа да бъде отворен.');
       }
+
+      _ensureCurrent(generation);
 
       _joined = true;
       debugPrint('Private call signaling channel connected.');
     } catch (_) {
+      if (identical(_channel, channel)) {
+        _channel = null;
+      }
+
       _joined = false;
-      _myId = null;
-      _participantIds = {};
+
+      if (_isCurrent(generation)) {
+        _myId = null;
+        _participantIds = <String>{};
+      }
 
       if (channel != null) {
         try {
@@ -155,51 +215,103 @@ class CallSignalingService {
         } catch (cleanupError) {
           debugPrint('Call signaling cleanup failed: $cleanupError');
         }
-
-        if (identical(_channel, channel)) {
-          _channel = null;
-        }
       }
 
       rethrow;
-    } finally {
-      _starting = false;
     }
   }
 
+  bool _hasValidPayload(CallSignal signal) {
+    switch (signal.type) {
+      case CallSignalType.offer:
+        return _hasValidSdp(signal.sdp, 'offer');
+
+      case CallSignalType.answer:
+        return _hasValidSdp(signal.sdp, 'answer');
+
+      case CallSignalType.ice:
+        final candidate = signal.candidate;
+        final value = candidate?['candidate'];
+        return value is String && value.isNotEmpty;
+
+      case CallSignalType.invite:
+      case CallSignalType.accept:
+      case CallSignalType.reject:
+      case CallSignalType.hangup:
+      case CallSignalType.busy:
+        return true;
+    }
+  }
+
+  bool _hasValidSdp(Map<String, dynamic>? sdp, String expectedType) {
+    if (sdp == null || sdp['type'] != expectedType) return false;
+
+    final value = sdp['sdp'];
+    return value is String && value.trim().isNotEmpty;
+  }
+
   Future<void> send(CallSignal signal) async {
+    if (_disposed) {
+      throw StateError('Услугата за сигнализация е затворена.');
+    }
+
     final channel = _channel;
     final myId = _myId;
 
     if (!_joined || channel == null || myId == null) {
-      throw StateError('Защитеният канал за разговори не е готов.');
+      throw StateError('Сигнализационният канал не е готов.');
     }
 
     if (signal.conversationId != conversationId ||
         signal.fromUserId != myId ||
-        !_participantIds.contains(myId)) {
+        !_participantIds.contains(myId) ||
+        signal.callId.trim().isEmpty) {
       throw StateError('Сигналът не съответства на текущия разговор.');
     }
 
+    if (!_hasValidPayload(signal)) {
+      throw StateError('Сигналът съдържа невалидни данни.');
+    }
+
+    // Изпращането е само през вече абонирания private канал.
     await channel.sendBroadcastMessage(
       event: 'signal',
       payload: signal.toJson(),
     );
+
+    if (_disposed || !identical(_channel, channel) || !_joined) {
+      throw StateError('Сигнализационният канал беше затворен при изпращане.');
+    }
+  }
+
+  bool _isCurrent(int generation) {
+    return !_disposed && _lifecycleGeneration == generation;
+  }
+
+  void _ensureCurrent(int generation) {
+    if (!_isCurrent(generation)) {
+      throw StateError('Операцията за сигнализация е отменена.');
+    }
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
+
+    _disposed = true;
+    _lifecycleGeneration++;
+
     final channel = _channel;
 
     _channel = null;
     _joined = false;
     _myId = null;
-    _participantIds = {};
+    _participantIds = <String>{};
 
     if (channel != null) {
       try {
         await _supabase.removeChannel(channel);
-      } catch (e) {
-        debugPrint('Call signaling cleanup failed: $e');
+      } catch (error) {
+        debugPrint('Call signaling cleanup failed: $error');
       }
     }
   }

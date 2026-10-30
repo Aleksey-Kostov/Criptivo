@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/crypto/key_manager.dart';
 import 'core/supabase_config.dart';
 import 'core/theme/chat_background_style.dart';
 import 'core/theme/criptivo_theme.dart';
@@ -16,10 +15,16 @@ Future<void> main() async {
     publishableKey: SupabaseConfig.anonKey,
   );
 
-  // Генерира ключове само ако липсват локално.
-  await KeyManager.ensureKeys();
+  // ВАЖНО:
+  // Не генерираме криптографични ключове при стартиране.
+  //
+  // При съществуващ акаунт липсващите локални ключове трябва
+  // да бъдат възстановени или създадени чрез изрично действие,
+  // а не автоматично при отваряне на приложението.
+  //
+  // Новата идентичност се създава в регистрационния поток.
+  // Не променяме публичния ключ в Supabase при стартиране.
 
-  // Зарежда избрания фон за чата.
   await ChatBackgroundStyle.load();
 
   runApp(const CriptivoApp());

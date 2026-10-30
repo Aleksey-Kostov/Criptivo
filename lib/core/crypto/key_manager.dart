@@ -205,13 +205,36 @@ class KeyManager {
 
     try {
       await _write(_publicKeyKey, publicBase64);
-      await hasKeys();
+
+      final valid = await hasKeys();
+
+      if (!valid) {
+        throw StateError(
+          'Проверката на генерираната двойка ключове е неуспешна.',
+        );
+      }
     } catch (_) {
+      // Опитваме да почистим и двата записа.
+      // Изтриването на единия ключ не трябва да пречи
+      // на опита за почистване на другия.
       try {
         await _delete(_privateKeyKey);
-      } catch (_) {
-        // Не скриваме първоначалната грешка.
+      } catch (cleanupError) {
+        debugPrint(
+          'KeyManager: неуспешно почистване на частния ключ: '
+          '$cleanupError',
+        );
       }
+
+      try {
+        await _delete(_publicKeyKey);
+      } catch (cleanupError) {
+        debugPrint(
+          'KeyManager: неуспешно почистване на публичния ключ: '
+          '$cleanupError',
+        );
+      }
+
       rethrow;
     }
 
@@ -220,6 +243,8 @@ class KeyManager {
 
   /// Запазва валидната идентичност или генерира нова,
   /// само когато и двата ключа липсват.
+  ///
+  /// Не извиквай автоматично при стартиране на приложението.
   static Future<void> ensureKeys() async {
     final exists = await hasKeys();
 
@@ -304,17 +329,16 @@ class KeyManager {
       await _write(_privateKeyKey, base64Encode(privateBytes));
       await _write(_publicKeyKey, base64Encode(publicBytes));
 
-      // Не приемаме импорта за успешен, докато двойката
-      // не бъде прочетена обратно и криптографски проверена.
       final isValid = await hasKeys();
 
       if (!isValid) {
-        throw StateError('Проверката на възстановената двойка е неуспешна.');
+        throw StateError(
+          'Проверката на възстановената двойка е неуспешна.',
+        );
       }
     } catch (_) {
       var rollbackSucceeded = true;
 
-      // Опитваме да възстановим и двата ключа независимо.
       try {
         await _restoreValue(_privateKeyKey, oldPrivate);
       } catch (_) {
@@ -337,7 +361,6 @@ class KeyManager {
         );
       }
 
-      // Предишното състояние е възстановено; връщаме първоначалната грешка.
       rethrow;
     }
 

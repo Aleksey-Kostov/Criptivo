@@ -32,6 +32,21 @@ pub enum MlsError {
     #[error("Group not found: {0}")]
     GroupNotFound(String),
 
+    #[error("Group already exists: {0}")]
+    GroupAlreadyExists(String),
+
+    #[error("Invalid KeyPackage")]
+    InvalidKeyPackage,
+
+    #[error("Invalid Welcome message")]
+    InvalidWelcome,
+
+    #[error("Invalid MLS message")]
+    InvalidMessage,
+
+    #[error("Unexpected message type: {0}")]
+    UnexpectedMessageType(String),
+
     #[error("OpenMLS error: {0}")]
     OpenMls(String),
 

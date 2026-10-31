@@ -1,4 +1,3 @@
-
 rust_input: crate::api
 rust_root: native/criptivo_mls
 dart_output: lib/src/rust

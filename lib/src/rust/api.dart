@@ -7,23 +7,63 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-/// Проверява дали Rust/OpenMLS модулът е достъпен през Flutter bridge.
+// These functions are ignored because they are not marked as `pub`: `create_dm_inner`, `create_identity_inner`, `encrypt_inner`, `generate_kps_inner`, `join_dm_inner`, `load_identity_inner`, `process_inner`
+
+/// Проверява дали native модулът е зареден.
 Future<String> mlsNativeStatus() =>
     RustLib.instance.api.crateApiMlsNativeStatus();
 
-/// Връща версията на native crate.
 Future<String> mlsVersion() => RustLib.instance.api.crateApiMlsVersion();
 
-/// Създава MLS идентичност.
-///
-/// Връща JSON низ:
-/// - при успех: резултатът от create_identity()
-/// - при грешка: {"status":"error","error":"..."}
-///
-/// ВАЖНО:
-/// Резултатът при успех съдържа protected_state_json със секретен материал.
-/// Не го записвай в логове и не го изпращай към Supabase.
-/// Преди продукционна употреба го съхранявай само чрез защитено локално
-/// съхранение и добави валидирано възстановяване на цялото MLS състояние.
+/// Създава нова identity и я зарежда в runtime.
 Future<String> mlsCreateIdentity({required String identity}) =>
     RustLib.instance.api.crateApiMlsCreateIdentity(identity: identity);
+
+/// Зарежда identity от protected snapshot (при старт на приложението).
+Future<String> mlsLoadIdentity({required String protectedStateJson}) => RustLib
+    .instance
+    .api
+    .crateApiMlsLoadIdentity(protectedStateJson: protectedStateJson);
+
+/// Генерира N KeyPackages. След това връща и обновен protected_state.
+Future<String> mlsGenerateKeyPackages({required int count}) =>
+    RustLib.instance.api.crateApiMlsGenerateKeyPackages(count: count);
+
+/// Връща публичния signature key на заредената identity.
+Future<String> mlsPublicKey() => RustLib.instance.api.crateApiMlsPublicKey();
+
+/// Alice създава 1:1 група и добавя Bob чрез KeyPackage.
+Future<String> mlsCreateDm({
+  required String groupId,
+  required String theirKeyPackageB64,
+}) => RustLib.instance.api.crateApiMlsCreateDm(
+  groupId: groupId,
+  theirKeyPackageB64: theirKeyPackageB64,
+);
+
+/// Bob приема Welcome и влиза в групата.
+Future<String> mlsJoinDm({
+  required String groupId,
+  required String welcomeB64,
+}) => RustLib.instance.api.crateApiMlsJoinDm(
+  groupId: groupId,
+  welcomeB64: welcomeB64,
+);
+
+/// Криптира application message.
+Future<String> mlsEncrypt({
+  required String groupId,
+  required String plaintext,
+}) => RustLib.instance.api.crateApiMlsEncrypt(
+  groupId: groupId,
+  plaintext: plaintext,
+);
+
+/// Обработва входящо MLS съобщение (application / commit / proposal).
+Future<String> mlsProcess({
+  required String groupId,
+  required String messageB64,
+}) => RustLib.instance.api.crateApiMlsProcess(
+  groupId: groupId,
+  messageB64: messageB64,
+);

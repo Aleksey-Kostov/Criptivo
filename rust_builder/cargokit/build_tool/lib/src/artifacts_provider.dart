@@ -9,6 +9,7 @@ import 'package:logging/logging.dart';
 import 'package:path/path.dart' as path;
 
 import 'builder.dart';
+import 'environment.dart';
 import 'crate_hash.dart';
 import 'options.dart';
 import 'precompile_binaries.dart';
@@ -73,13 +74,13 @@ class ArtifactProvider {
       final artifactNames = <String>{
         ...getArtifactNames(
           target: target,
-          libraryName: environment.crateInfo.packageName,
+          libraryName: Environment.libraryName ?? environment.crateInfo.packageName,
           aritifactType: AritifactType.dylib,
           remote: false,
         ),
         ...getArtifactNames(
           target: target,
-          libraryName: environment.crateInfo.packageName,
+          libraryName: Environment.libraryName ?? environment.crateInfo.packageName,
           aritifactType: AritifactType.staticlib,
           remote: false,
         )
@@ -122,7 +123,7 @@ class ArtifactProvider {
     for (final target in targets) {
       final requiredArtifacts = getArtifactNames(
         target: target,
-        libraryName: environment.crateInfo.packageName,
+        libraryName: Environment.libraryName ?? environment.crateInfo.packageName,
         remote: true,
       );
       final artifactsForTarget = <Artifact>[];

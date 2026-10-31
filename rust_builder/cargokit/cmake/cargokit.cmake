@@ -34,9 +34,17 @@ function(apply_cargokit target manifest_dir lib_name any_symbol_name)
     endif()
     set(CARGOKIT_OHOS_SDK_HOME $ENV{OHOS_SDK_HOME})
 
+    if (DEFINED FLUTTER_ROOT AND NOT "${FLUTTER_ROOT}" STREQUAL "")
+        set(CARGOKIT_FLUTTER_ROOT "${FLUTTER_ROOT}")
+    else()
+        set(CARGOKIT_FLUTTER_ROOT "$ENV{FLUTTER_ROOT}")
+    endif()
+
     set(CARGOKIT_ENV
         "CARGOKIT_CMAKE=${CMAKE_COMMAND}"
         "CARGOKIT_CONFIGURATION=$<CONFIG>"
+        "CARGOKIT_LIB_NAME=${CARGOKIT_LIB_NAME}"
+        "FLUTTER_ROOT=${CARGOKIT_FLUTTER_ROOT}"
         "CARGOKIT_MANIFEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/${manifest_dir}"
         "CARGOKIT_TARGET_TEMP_DIR=${CARGOKIT_TEMP_DIR}"
         "CARGOKIT_OUTPUT_DIR=${CARGOKIT_OUTPUT_DIR}"

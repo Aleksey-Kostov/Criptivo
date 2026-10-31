@@ -51,6 +51,9 @@ class Environment {
   // CMAKE
   static String get targetPlatform => _getEnv("CARGOKIT_TARGET_PLATFORM");
 
+  /// Rust library name, which can differ from the Cargo package name.
+  static String? get libraryName => _getEnvOptional("CARGOKIT_LIB_NAME");
+
   static String _getEnv(String key) {
     final res = Platform.environment[key];
     if (res == null) {

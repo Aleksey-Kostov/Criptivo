@@ -6,9 +6,12 @@ import 'core/theme/chat_background_style.dart';
 import 'core/theme/criptivo_theme.dart';
 import 'features/auth/login_page.dart';
 import 'features/home/home_page.dart';
+import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await RustLib.init();
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
@@ -24,6 +27,9 @@ Future<void> main() async {
   //
   // Новата идентичност се създава в регистрационния поток.
   // Не променяме публичния ключ в Supabase при стартиране.
+  //
+  // MLS identity се зарежда след login (loadIdentityFromStorage),
+  // не тук при студено стартиране без сесия.
 
   await ChatBackgroundStyle.load();
 

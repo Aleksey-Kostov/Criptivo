@@ -7,7 +7,7 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `create_dm_inner`, `create_identity_inner`, `encrypt_inner`, `generate_kps_inner`, `join_dm_inner`, `load_identity_inner`, `process_inner`
+// These functions are ignored because they are not marked as `pub`: `create_dm_inner`, `create_identity_inner`, `encrypt_inner`, `generate_kps_inner`, `join_dm_inner`, `load_group_inner`, `load_identity_inner`, `process_inner`
 
 /// Проверява дали native модулът е зареден.
 Future<String> mlsNativeStatus() =>
@@ -48,6 +48,15 @@ Future<String> mlsJoinDm({
 }) => RustLib.instance.api.crateApiMlsJoinDm(
   groupId: groupId,
   welcomeB64: welcomeB64,
+);
+
+/// Зарежда група от protected state (след restart).
+Future<String> mlsLoadGroup({
+  required String groupId,
+  required String groupStateJson,
+}) => RustLib.instance.api.crateApiMlsLoadGroup(
+  groupId: groupId,
+  groupStateJson: groupStateJson,
 );
 
 /// Криптира application message.

@@ -59,13 +59,10 @@ class AuthService {
       throw StateError('Този username вече е зает');
     }
 
-    // Генерираме ключове само ако и двата липсват.
-    // Непълна или невалидна идентичност прекратява регистрацията.
     if (!await KeyManager.hasKeys()) {
       await KeyManager.generateAndStoreKeys();
     }
 
-    // Повторна проверка преди публикуване на публичния ключ.
     if (!await KeyManager.hasKeys()) {
       throw StateError(
         'Криптографските ключове не са налични. '
@@ -117,8 +114,6 @@ class AuthService {
 
       lastKeySyncStatus = KeySyncStatus.ok;
     } else {
-      // При изискване за потвърждение на имейл Supabase
-      // може да не върне потребител веднага.
       lastKeySyncStatus = KeySyncStatus.error;
     }
 
@@ -139,13 +134,6 @@ class AuthService {
   }
 
   /// Безопасно синхронизира локалния публичен ключ с профила.
-  ///
-  /// - Липсваща локална идентичност: missingLocal.
-  /// - Невалидна локална двойка: invalidLocal.
-  /// - Празен сървърен ключ: опит за публикуване на локалния ключ.
-  /// - Съвпадащи ключове: ok.
-  /// - Различни ключове: mismatch, без презаписване.
-  /// - Грешка при заявка или запис: error.
   static Future<KeySyncStatus> syncPublicKeyToProfile() async {
     final user = currentUser;
 
@@ -156,7 +144,6 @@ class AuthService {
 
     late final String local;
 
-    // Първо валидираме локалната криптографска идентичност.
     try {
       final hasKeys = await KeyManager.hasKeys();
 
@@ -185,7 +172,6 @@ class AuthService {
       return lastKeySyncStatus;
     }
 
-    // Следващите грешки се отнасят до Supabase или синхронизацията.
     try {
       final row = await _supabase
           .from('profiles')
@@ -233,7 +219,6 @@ class AuthService {
         return lastKeySyncStatus;
       }
 
-      // Критично: не заменяме сървърната идентичност автоматично.
       debugPrint(
         'Criptivo: открито е несъответствие на публичните ключове. '
         'Сървърният ключ не е променен. '
@@ -251,10 +236,6 @@ class AuthService {
   }
 
   /// Публикува локалния ключ след изрично потвърдено възстановяване.
-  ///
-  /// ВНИМАНИЕ: заменя публичния ключ в профила.
-  /// Използвай само след възстановяване на правилната идентичност
-  /// и изрично потвърждение от потребителя.
   static Future<void> forcePublishLocalPublicKey() async {
     final user = currentUser;
 
@@ -300,11 +281,32 @@ class AuthService {
 
     lastKeySyncStatus = KeySyncStatus.ok;
 
-    // Не записваме самия ключ в логовете.
     debugPrint(
       'Criptivo: публичният ключ е публикуван '
       'след потвърдено възстановяване.',
     );
+  }
+
+  /// DEV/TEST: при mismatch/missing/invalid — нова локална двойка + publish.
+  /// Старите E2EE съобщения стават нечетими.
+  static Future<KeySyncStatus> repairKeysForTesting() async {
+    final user = currentUser;
+
+    if (user == null) {
+      lastKeySyncStatus = KeySyncStatus.error;
+      return lastKeySyncStatus;
+    }
+
+    try {
+      await KeyManager.resetAndGenerateKeys();
+      await forcePublishLocalPublicKey();
+      lastKeySyncStatus = KeySyncStatus.ok;
+      return lastKeySyncStatus;
+    } catch (e) {
+      debugPrint('Criptivo: repairKeysForTesting failed: $e');
+      lastKeySyncStatus = KeySyncStatus.error;
+      return lastKeySyncStatus;
+    }
   }
 
   static Future<void> signOut() async {

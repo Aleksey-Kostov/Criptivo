@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use openmls::prelude::{
     tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize},
-    KeyPackageIn, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
+    GroupId, KeyPackageIn, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
     MlsMessageIn, OpenMlsProvider, ProcessedMessageContent, ProtocolMessage, ProtocolVersion,
     StagedWelcome,
 };
@@ -19,12 +19,15 @@ use crate::CIPHERSUITE;
 #[derive(Debug, SerdeSerialize, SerdeDeserialize)]
 pub struct GroupStateBlob {
     pub schema_version: u32,
+    /// Наш conversation id
     pub group_id: String,
+    /// OpenMLS GroupId (нужен за MlsGroup::load)
+    pub mls_group_id_base64: String,
     pub storage_entries: Vec<StorageEntry>,
     pub ratchet_tree_base64: Option<String>,
 }
 
-pub const GROUP_SCHEMA_VERSION: u32 = 1;
+pub const GROUP_SCHEMA_VERSION: u32 = 2;
 
 pub struct AddMemberResult {
     pub commit_b64: String,
@@ -171,6 +174,66 @@ impl MlsGroupSession {
         })
     }
 
+    /// Възстановява група от protected blob (след restart).
+    pub fn load_from_state(
+        identity: &MlsIdentity,
+        conversation_id: &str,
+        state_json: &str,
+    ) -> Result<Self, MlsError> {
+        let blob: GroupStateBlob =
+            serde_json::from_str(state_json).map_err(|_| MlsError::InvalidStateJson)?;
+
+        if blob.schema_version != GROUP_SCHEMA_VERSION {
+            return Err(MlsError::UnsupportedSchema(blob.schema_version));
+        }
+
+        if blob.group_id != conversation_id {
+            return Err(MlsError::Other(format!(
+                "group_id mismatch: blob={} arg={}",
+                blob.group_id, conversation_id
+            )));
+        }
+
+        // Merge storage entries в identity provider
+        {
+            let mut values = identity
+                .provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| MlsError::Storage("lock storage".into()))?;
+
+            for entry in &blob.storage_entries {
+                let key = BASE64
+                    .decode(&entry.key_base64)
+                    .map_err(|_| MlsError::InvalidBase64)?;
+                let value = BASE64
+                    .decode(&entry.value_base64)
+                    .map_err(|_| MlsError::InvalidBase64)?;
+                values.insert(key, value);
+            }
+        }
+
+        let gid_bytes = BASE64
+            .decode(blob.mls_group_id_base64.trim())
+            .map_err(|_| MlsError::InvalidBase64)?;
+
+        let mls_group_id = GroupId::from_slice(&gid_bytes);
+
+        let group = MlsGroup::load(identity.provider.storage(), &mls_group_id)
+            .map_err(|e| MlsError::OpenMls(format!("MlsGroup::load: {e}")))?
+            .ok_or_else(|| {
+                MlsError::GroupNotFound(format!(
+                    "MLS group not in storage for conversation {conversation_id}"
+                ))
+            })?;
+
+        Ok(Self {
+            group_id: conversation_id.to_string(),
+            group,
+        })
+    }
+
     /// Криптира application message.
     pub fn encrypt(
         &mut self,
@@ -283,9 +346,12 @@ impl MlsGroupSession {
                 .map_err(|e| MlsError::Serialization(e.to_string()))?,
         );
 
+        let mls_group_id_base64 = BASE64.encode(self.group.group_id().as_slice());
+
         let blob = GroupStateBlob {
             schema_version: GROUP_SCHEMA_VERSION,
             group_id: self.group_id.clone(),
+            mls_group_id_base64,
             storage_entries,
             ratchet_tree_base64: Some(tree_b64),
         };

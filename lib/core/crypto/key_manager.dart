@@ -214,9 +214,6 @@ class KeyManager {
         );
       }
     } catch (_) {
-      // Опитваме да почистим и двата записа.
-      // Изтриването на единия ключ не трябва да пречи
-      // на опита за почистване на другия.
       try {
         await _delete(_privateKeyKey);
       } catch (cleanupError) {
@@ -280,12 +277,6 @@ class KeyManager {
   }
 
   /// Възстановява двойка ключове от архив.
-  ///
-  /// Проверява двойката, пази старото състояние и проверява
-  /// записаните стойности. При неуспех се опитва да върне
-  /// предишното състояние.
-  ///
-  /// Извиквай само след изрично потвърждение от потребителя.
   static Future<void> importKeyPair({
     required String privateKeyBase64,
     required String publicKeyBase64,
@@ -321,7 +312,6 @@ class KeyManager {
       );
     }
 
-    // Запазваме предишното състояние, преди да променим нещо.
     final oldPrivate = await _read(_privateKeyKey);
     final oldPublic = await _read(_publicKeyKey);
 
@@ -332,9 +322,7 @@ class KeyManager {
       final isValid = await hasKeys();
 
       if (!isValid) {
-        throw StateError(
-          'Проверката на възстановената двойка е неуспешна.',
-        );
+        throw StateError('Проверката на възстановената двойка е неуспешна.');
       }
     } catch (_) {
       var rollbackSucceeded = true;
@@ -367,7 +355,6 @@ class KeyManager {
     debugPrint('KeyManager: ключовете са възстановени и проверени.');
   }
 
-  /// Възстановява конкретна стара стойност или липсата ѝ.
   static Future<void> _restoreValue(String key, String? value) async {
     if (value == null || value.isEmpty) {
       await _delete(key);
@@ -376,7 +363,6 @@ class KeyManager {
     }
   }
 
-  /// Кратък fingerprint за показване в интерфейса.
   static Future<String?> publicKeyFingerprint() async {
     final publicKey = await getPublicKeyBase64();
 
@@ -413,6 +399,13 @@ class KeyManager {
     await _delete(_publicKeyKey);
 
     debugPrint('KeyManager: ключовете са изтрити.');
+  }
+
+  /// DEV/TEST: изтрива локалните ключове и генерира нова двойка.
+  /// Старите E2EE съобщения стават нечетими.
+  static Future<void> resetAndGenerateKeys() async {
+    await clearKeys();
+    await generateAndStoreKeys();
   }
 
   static bool _bytesEqual(List<int> a, List<int> b) {

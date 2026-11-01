@@ -120,6 +120,26 @@ class MlsService {
     );
   }
 
+  /// Зарежда група в Rust runtime от secure storage.
+  /// Извикай при отваряне на MLS разговор (след loadIdentity).
+  Future<int> ensureGroupLoaded(String conversationId) async {
+    _ensureIdentity();
+
+    final state = await MlsSecureStorage.loadGroupState(conversationId);
+    if (state == null || state.isEmpty) {
+      throw MlsServiceException(
+        'No saved MLS group state for $conversationId. Create or join DM first.',
+      );
+    }
+
+    final raw = await rust.mlsLoadGroup(
+      groupId: conversationId,
+      groupStateJson: state,
+    );
+    final map = _decodeOk(raw);
+    return _asInt(map['epoch']);
+  }
+
   // ---------------------------------------------------------------------------
   // Messages
   // ---------------------------------------------------------------------------

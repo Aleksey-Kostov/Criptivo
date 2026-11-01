@@ -146,6 +146,39 @@ fn join_dm_inner(group_id: &str, welcome_b64: &str) -> Result<String, MlsError> 
     })
 }
 
+/// Зарежда група от protected state (след restart).
+pub fn mls_load_group(group_id: String, group_state_json: String) -> String {
+    match load_group_inner(&group_id, &group_state_json) {
+        Ok(v) => v,
+        Err(e) => err_json(e),
+    }
+}
+
+fn load_group_inner(group_id: &str, state_json: &str) -> Result<String, MlsError> {
+    with_identity(|identity| {
+        with_groups_mut(|reg| {
+            if reg.contains(group_id) {
+                let session = reg.get_mut(group_id)?;
+                return Ok(ok_json(json!({
+                    "group_id": group_id,
+                    "epoch": session.current_epoch(),
+                    "already_loaded": true,
+                })));
+            }
+
+            let session = MlsGroupSession::load_from_state(identity, group_id, state_json)?;
+            let epoch = session.current_epoch();
+            reg.insert(session);
+
+            Ok(ok_json(json!({
+                "group_id": group_id,
+                "epoch": epoch,
+                "already_loaded": false,
+            })))
+        })
+    })
+}
+
 /// Криптира application message.
 pub fn mls_encrypt(group_id: String, plaintext: String) -> String {
     match encrypt_inner(&group_id, plaintext.as_bytes()) {

@@ -2,6 +2,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth/auth_service.dart';
 import '../crypto/message_crypto.dart';
+import '../crypto/mls_service.dart';
+import 'mls_chat_service.dart';
 
 class ChatService {
   static final _supabase = Supabase.instance.client;
@@ -108,7 +110,11 @@ class ChatService {
 
     final created = await _supabase
         .from('conversations')
-        .insert({'participant_1': myId, 'participant_2': otherUserId})
+        .insert({
+          'participant_1': myId,
+          'participant_2': otherUserId,
+          'crypto_version': 'mls',
+        })
         .select('id')
         .single();
 
@@ -128,7 +134,8 @@ class ChatService {
           last_message_at,
           participant_1,
           participant_2,
-          disappear_seconds
+          disappear_seconds,
+          crypto_version
         ''')
         .or('participant_1.eq.$myId,participant_2.eq.$myId')
         .order('last_message_at', ascending: false);
@@ -145,6 +152,7 @@ class ChatService {
         'last_message_at': row['last_message_at'],
         'created_at': row['created_at'],
         'disappear_seconds': row['disappear_seconds'],
+        'crypto_version': row['crypto_version'] ?? 'x25519',
       });
     }
 
@@ -164,6 +172,16 @@ class ChatService {
     }
 
     return list;
+  }
+
+  static Future<String> getCryptoVersion(String conversationId) async {
+    final row = await _supabase
+        .from('conversations')
+        .select('crypto_version')
+        .eq('id', conversationId)
+        .maybeSingle();
+
+    return (row?['crypto_version'] as String?) ?? 'x25519';
   }
 
   /// null = изключено; иначе секунди (30, 300, 3600, ...).
@@ -187,16 +205,32 @@ class ChatService {
     return row?['disappear_seconds'] as int?;
   }
 
-  /// Изпраща криптирано съобщение след проверки на идентичността
-  /// и участниците в разговора.
+  /// Изпраща съобщение: MLS ако разговорът е mls, иначе X25519.
   static Future<Map<String, dynamic>> sendEncryptedMessage({
     required String conversationId,
     required String plaintext,
     required String theirPublicKeyBase64,
+    String? otherUserId,
   }) async {
     final myId = _myId;
     if (myId == null) throw StateError('Не си влязъл.');
 
+    final version = await getCryptoVersion(conversationId);
+
+    if (version == 'mls') {
+      if (otherUserId != null) {
+        await MlsChatService.instance.ensureSession(
+          conversationId: conversationId,
+          otherUserId: otherUserId,
+        );
+      }
+      return MlsChatService.instance.sendMlsMessage(
+        conversationId: conversationId,
+        plaintext: plaintext,
+      );
+    }
+
+    // --- стар X25519 път ---
     final verifiedPeerKey = await verifySendingIdentity(
       conversationId: conversationId,
       theirPublicKeyBase64: theirPublicKeyBase64,
@@ -212,7 +246,6 @@ class ChatService {
     try {
       disappearSeconds = await getDisappearSeconds(conversationId);
     } catch (_) {
-      // Запазва досегашното поведение при недостъпна настройка.
       disappearSeconds = null;
     }
 
@@ -230,11 +263,13 @@ class ChatService {
           'sender_id': myId,
           'ciphertext': encrypted.ciphertext,
           'nonce': encrypted.nonce,
+          'crypto_version': 'x25519',
+          'message_type': 'text',
           'is_deleted': false,
           'expires_at': expiresAt,
         })
         .select(
-          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at',
+          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at, crypto_version, message_type',
         )
         .single();
 
@@ -253,7 +288,7 @@ class ChatService {
     final result = await _supabase
         .from('messages')
         .select(
-          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at',
+          'id, sender_id, ciphertext, nonce, created_at, read_at, expires_at, crypto_version, message_type',
         )
         .eq('conversation_id', conversationId)
         .or('is_deleted.eq.false,is_deleted.is.null')
@@ -270,15 +305,51 @@ class ChatService {
         try {
           final expires = DateTime.parse(exp.toString()).toUtc();
           if (!expires.isAfter(now)) continue;
-        } catch (_) {
-          // Запазва съществуващото поведение при невалидна дата.
-        }
+        } catch (_) {}
       }
 
       list.add(map);
     }
 
     return list;
+  }
+
+  /// Decrypt според crypto_version.
+  /// За mls_welcome / mls_commit връща null (control messages).
+  static Future<String?> decryptMessage({
+    required String conversationId,
+    required Map<String, dynamic> row,
+    required String theirPublicKeyBase64,
+  }) async {
+    final version = row['crypto_version'] as String? ?? 'x25519';
+    final type = row['message_type'] as String? ?? 'text';
+
+    if (version == 'mls') {
+      if (type == 'mls_welcome' || type == 'mls_commit') {
+        return null;
+      }
+
+      final result = await MlsService.instance.process(
+        conversationId: conversationId,
+        messageB64: row['ciphertext'] as String,
+      );
+
+      if (result is MlsApplicationMessage) {
+        return result.plaintext;
+      }
+      return null;
+    }
+
+    final nonce = row['nonce'] as String? ?? '';
+    if (nonce.isEmpty) {
+      throw StateError('Липсва nonce за X25519 съобщение.');
+    }
+
+    return MessageCrypto.decrypt(
+      ciphertextBase64: row['ciphertext'] as String,
+      nonceBase64: nonce,
+      theirPublicKeyBase64: theirPublicKeyBase64,
+    );
   }
 
   /// Маркира непрочетените съобщения от другия участник като прочетени.

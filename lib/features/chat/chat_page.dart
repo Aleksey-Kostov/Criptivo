@@ -110,8 +110,6 @@ class _ChatPageState extends State<ChatPage> {
       widget.otherUser['other_user_id'] as String?;
 
   /// Обновява състоянието само докато State обектът е монтиран.
-  ///
-  /// Може да се извиква от extension-ите в part файловете.
   void _safeSetState(VoidCallback callback) {
     if (!mounted) return;
     setState(callback);

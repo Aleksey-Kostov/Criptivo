@@ -10,6 +10,21 @@ extension _ChatPageLifecycle on _ChatPageState {
       await _loadConversationMeta();
       if (!mounted) return;
 
+      // C4: MLS session (create / join / load from storage)
+      final otherId = _otherUserId;
+      if (otherId != null && otherId.isNotEmpty) {
+        try {
+          await MlsChatService.instance.ensureSession(
+            conversationId: widget.conversationId,
+            otherUserId: otherId,
+          );
+        } catch (e, st) {
+          debugPrint('MLS ensureSession: $e');
+          debugPrintStack(stackTrace: st);
+          // Не блокирай целия чат — грешката ще се види при send ако е критична.
+        }
+      }
+
       final theirKey = _theirPublicKey;
       if (theirKey != null && theirKey.isNotEmpty) {
         await _startSeal();
@@ -113,7 +128,7 @@ extension _ChatPageLifecycle on _ChatPageState {
     try {
       final row = await Supabase.instance.client
           .from('conversations')
-          .select('created_at, disappear_seconds')
+          .select('created_at, disappear_seconds, crypto_version')
           .eq('id', widget.conversationId)
           .maybeSingle();
 
@@ -311,8 +326,6 @@ extension _ChatPageLifecycle on _ChatPageState {
 
       if (!mounted) return;
 
-      // Do not display a result calculated with a key that changed
-      // while the asynchronous operation was running.
       if (_theirPublicKey != theirKey ||
           _conversationCreatedAt != conversationCreatedAt) {
         return;

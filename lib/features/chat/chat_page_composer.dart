@@ -36,7 +36,6 @@ extension _ChatPageComposer on _ChatPageState {
     await _typingService?.setTyping(false);
 
     try {
-      // Verify the current peer key before preparing the message.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
@@ -72,6 +71,7 @@ extension _ChatPageComposer on _ChatPageState {
         conversationId: widget.conversationId,
         plaintext: plaintext,
         theirPublicKeyBase64: theirKey,
+        otherUserId: _otherUserId,
       );
 
       if (!mounted) return;
@@ -91,14 +91,11 @@ extension _ChatPageComposer on _ChatPageState {
           };
         }
 
-        // Clear only the text that was actually sent. If the user typed
-        // something else while the request was running, preserve it.
         if (_controller.text.trim() == text) {
           _controller.clear();
           _hasText = false;
         }
 
-        // Do not clear a newer reply selection.
         if (identical(_replyTo, replyAtSend)) {
           _replyTo = null;
         }
@@ -114,8 +111,6 @@ extension _ChatPageComposer on _ChatPageState {
           createdAt: inserted['created_at'],
         );
       } catch (e) {
-        // The message was sent successfully. A preview failure must not
-        // make the send appear to have failed or encourage duplicate sends.
         debugPrint('Failed to remember sent message preview: $e');
       }
     } catch (e, stackTrace) {
@@ -129,7 +124,6 @@ extension _ChatPageComposer on _ChatPageState {
           _messages.removeWhere((m) => m['id'] == tempId);
         }
 
-        // Keep the text and reply selection so the user can retry.
         _error = 'Грешка при изпращане: $e';
         _hasText = _controller.text.trim().isNotEmpty;
       });
@@ -155,7 +149,6 @@ extension _ChatPageComposer on _ChatPageState {
     });
 
     try {
-      // Verify the peer key before uploading media.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
@@ -192,6 +185,7 @@ extension _ChatPageComposer on _ChatPageState {
         conversationId: widget.conversationId,
         plaintext: ref.envelopeJson,
         theirPublicKeyBase64: theirKey,
+        otherUserId: _otherUserId,
       );
 
       if (!mounted) return;
@@ -210,8 +204,6 @@ extension _ChatPageComposer on _ChatPageState {
           };
         }
 
-        // Remove the attachment from the composer only after the message
-        // has been accepted by the message service.
         if (identical(_pending, p)) {
           _pending = null;
         }
@@ -240,7 +232,6 @@ extension _ChatPageComposer on _ChatPageState {
           _messages.removeWhere((m) => m['id'] == tempId);
         }
 
-        // Keep the pending attachment so the user can retry.
         _error = 'Медия: $e';
       });
     } finally {
@@ -263,7 +254,6 @@ extension _ChatPageComposer on _ChatPageState {
     });
 
     try {
-      // Verify the peer key before uploading the voice recording.
       await _refreshTheirPublicKey();
       if (!mounted) return;
 
@@ -303,6 +293,7 @@ extension _ChatPageComposer on _ChatPageState {
         conversationId: widget.conversationId,
         plaintext: uploaded.envelopeJson,
         theirPublicKeyBase64: theirKey,
+        otherUserId: _otherUserId,
       );
 
       if (!mounted) return;
@@ -485,7 +476,7 @@ extension _ChatPageComposer on _ChatPageState {
               ),
               ListTile(
                 leading: const Icon(
-                  Icons.attach_file,
+                  Icons.attach_file_rounded,
                   color: CriptivoColors.neon,
                 ),
                 title: const Text(
@@ -497,6 +488,7 @@ extension _ChatPageComposer on _ChatPageState {
                   _pickPendingFile();
                 },
               ),
+              const SizedBox(height: 8),
             ],
           ),
         );

@@ -34,7 +34,6 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
       if (!mounted) return;
 
-      // Не показвай номер, изчислен с ключ, който вече е сменен.
       if (_theirPublicKey != theirKey) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -182,7 +181,6 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
             if (id == null || senderId == null) return;
 
-            // Fail closed: only accept incoming messages from the expected peer.
             final expectedPeerId = _otherUserId;
             if (expectedPeerId == null || senderId != expectedPeerId) return;
 
@@ -193,22 +191,47 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
             final ciphertext = row['ciphertext'];
             final nonce = row['nonce'];
+            final version = row['crypto_version'] as String? ?? 'x25519';
+            final type = row['message_type'] as String? ?? 'text';
 
-            if (ciphertext is! String ||
-                ciphertext.isEmpty ||
-                nonce is! String ||
-                nonce.isEmpty) {
-              debugPrint(
-                'Ignoring message with invalid encrypted payload: $id',
-              );
+            if (ciphertext is! String || ciphertext.isEmpty) {
+              debugPrint('Ignoring message with invalid payload: $id');
               return;
+            }
+
+            // MLS control messages: process, don't show in UI
+            if (version == 'mls' &&
+                (type == 'mls_welcome' || type == 'mls_commit')) {
+              try {
+                final oid = _otherUserId;
+                if (oid != null && oid.isNotEmpty) {
+                  await MlsChatService.instance.ensureSession(
+                    conversationId: widget.conversationId,
+                    otherUserId: oid,
+                  );
+                }
+                if (type == 'mls_commit') {
+                  await MlsService.instance.process(
+                    conversationId: widget.conversationId,
+                    messageB64: ciphertext,
+                  );
+                }
+              } catch (e) {
+                debugPrint('MLS control message handling: $e');
+              }
+              return;
+            }
+
+            if (version != 'mls') {
+              if (nonce is! String || nonce.isEmpty) {
+                debugPrint('Ignoring message with invalid nonce: $id');
+                return;
+              }
             }
 
             String plaintext;
 
             try {
-              // Refresh from the profile before decrypting so a cached peer
-              // key is not silently reused for a new incoming message.
               await _refreshTheirPublicKey();
 
               if (!mounted) return;
@@ -218,16 +241,13 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
               if (theirKey == null || theirKey.isEmpty) {
                 plaintext = '[липсва ключ]';
               } else {
-                plaintext = await MessageCrypto.decrypt(
-                  ciphertextBase64: ciphertext,
-                  nonceBase64: nonce,
+                final p = await ChatService.decryptMessage(
+                  conversationId: widget.conversationId,
+                  row: row,
                   theirPublicKeyBase64: theirKey,
                 );
-
+                plaintext = p ?? '';
                 if (!mounted) return;
-
-                // Do not apply a result calculated with a key that changed
-                // while the asynchronous decryption was running.
                 if (_theirPublicKey != theirKey) return;
               }
             } catch (e) {
@@ -236,9 +256,6 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
             }
 
             if (!mounted) return;
-
-            // Recheck after awaits: polling and realtime may deliver the same
-            // message concurrently.
             if (_messages.any((m) => m['id'] == id)) return;
 
             final msg = _messageFromPlaintext(row, plaintext, false);
@@ -324,11 +341,24 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
     });
   }
 
+  Future<String> _decryptRow(Map<String, dynamic> row, String theirKey) async {
+    final version = row['crypto_version'] as String? ?? 'x25519';
+    final type = row['message_type'] as String? ?? 'text';
+
+    if (version == 'mls' && (type == 'mls_welcome' || type == 'mls_commit')) {
+      return ''; // skip in UI via caller
+    }
+
+    final p = await ChatService.decryptMessage(
+      conversationId: widget.conversationId,
+      row: row,
+      theirPublicKeyBase64: theirKey,
+    );
+    return p ?? '';
+  }
+
   Future<void> _loadMessagesQuiet() async {
     try {
-      // Recover if the peer key is currently unavailable. If refresh fails,
-      // leave the existing message list intact instead of replacing it with
-      // misleading decryption placeholders.
       if (_theirPublicKey == null || _theirPublicKey!.isEmpty) {
         await _refreshTheirPublicKey();
       }
@@ -345,25 +375,19 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
       for (final row in rows) {
         if (!mounted) return;
 
+        final version = row['crypto_version'] as String? ?? 'x25519';
+        final type = row['message_type'] as String? ?? 'text';
+
+        if (version == 'mls' &&
+            (type == 'mls_welcome' || type == 'mls_commit')) {
+          continue;
+        }
+
         final isMe = row['sender_id'] == myId;
         String plaintext;
 
         try {
-          final ciphertext = row['ciphertext'];
-          final nonce = row['nonce'];
-
-          if (ciphertext is! String ||
-              ciphertext.isEmpty ||
-              nonce is! String ||
-              nonce.isEmpty) {
-            throw const FormatException('Invalid encrypted message payload.');
-          }
-
-          plaintext = await MessageCrypto.decrypt(
-            ciphertextBase64: ciphertext,
-            nonceBase64: nonce,
-            theirPublicKeyBase64: theirKey,
-          );
+          plaintext = await _decryptRow(row, theirKey);
         } catch (e) {
           plaintext = '[не може да се декриптира]';
           debugPrint('Quiet poll decrypt error: $e');
@@ -374,7 +398,6 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
 
       if (!mounted) return;
 
-      // If the key changed during the batch, discard this stale result.
       if (_theirPublicKey != theirKey) return;
 
       await _attachReactions(decrypted);
@@ -451,25 +474,19 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
       for (final row in rows) {
         if (!mounted) return;
 
+        final version = row['crypto_version'] as String? ?? 'x25519';
+        final type = row['message_type'] as String? ?? 'text';
+
+        if (version == 'mls' &&
+            (type == 'mls_welcome' || type == 'mls_commit')) {
+          continue;
+        }
+
         final isMe = row['sender_id'] == myId;
         String plaintext;
 
         try {
-          final ciphertext = row['ciphertext'];
-          final nonce = row['nonce'];
-
-          if (ciphertext is! String ||
-              ciphertext.isEmpty ||
-              nonce is! String ||
-              nonce.isEmpty) {
-            throw const FormatException('Invalid encrypted message payload.');
-          }
-
-          plaintext = await MessageCrypto.decrypt(
-            ciphertextBase64: ciphertext,
-            nonceBase64: nonce,
-            theirPublicKeyBase64: theirKey,
-          );
+          plaintext = await _decryptRow(row, theirKey);
         } catch (e) {
           plaintext = '[не може да се декриптира]';
           debugPrint('Decrypt error: $e');
@@ -520,6 +537,4 @@ extension _ChatPageSecurityRealtime on _ChatPageState {
       });
     }
   }
-
-  // ── Send ─────────────────────────────────────
 }

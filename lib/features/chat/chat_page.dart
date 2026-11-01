@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/chat/mls_chat_service.dart';
+import '../../core/crypto/mls_service.dart';
+
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
 import '../../core/chat/conversation_preview_store.dart';

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/chat/chat_service.dart';
 import '../../core/chat/conversation_preview_store.dart';
+import '../../core/crypto/crypto_bootstrap.dart';
 import '../../core/theme/criptivo_theme.dart';
 import '../chat/chat_page.dart';
 import '../chat/new_chat_page.dart';
@@ -60,9 +61,11 @@ class _HomePageState extends State<HomePage> {
 
       if (!mounted) return;
 
-      final status = await _forceSyncKey();
+      final status = await CryptoBootstrap.runAfterLogin();
 
       if (!mounted) return;
+
+      setState(() => _keySyncStatus = status);
 
       if (status != KeySyncStatus.ok) {
         setState(() => _loading = false);

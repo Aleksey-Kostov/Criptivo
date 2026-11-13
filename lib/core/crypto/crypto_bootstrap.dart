@@ -24,7 +24,15 @@ class CryptoBootstrap {
 
     try {
       final existing = await MlsService.instance.loadIdentityFromStorage();
-      if (existing == null) {
+
+      // На едно устройство след смяна на акаунт не ползваме чужда MLS identity.
+      if (existing == null || existing.identity != user.id) {
+        if (existing != null) {
+          debugPrint(
+            'Criptivo: MLS identity mismatch '
+            '(stored=${existing.identity}, user=${user.id}) — recreating',
+          );
+        }
         await MlsService.instance.createIdentity(user.id);
         debugPrint('Criptivo: MLS identity created for ${user.id}');
       } else {

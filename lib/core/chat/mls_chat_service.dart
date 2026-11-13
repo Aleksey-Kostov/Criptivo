@@ -116,7 +116,7 @@ class MlsChatService {
     debugPrint('Criptivo: MLS session joined $conversationId');
   }
 
-  /// При отваряне на чат: initiator или responder.
+  /// При отваряне на чат: local state → join ако има welcome → иначе create.
   Future<void> ensureSession({
     required String conversationId,
     required String otherUserId,
@@ -132,18 +132,28 @@ class MlsChatService {
 
     if (conv == null) throw StateError('Разговорът не съществува.');
 
-    final version = conv['crypto_version'] as String? ?? 'x25519';
     final localState = await MlsSecureStorage.loadGroupState(conversationId);
+    if (localState != null && localState.isNotEmpty) {
+      await MlsService.instance.ensureGroupLoaded(conversationId);
+      return;
+    }
 
-    if (version == 'mls' || localState != null) {
-      if (localState != null) {
-        await MlsService.instance.ensureGroupLoaded(conversationId);
-        return;
-      }
+    // Има ли вече Welcome в DB?
+    final welcomeRow = await _db
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('message_type', 'mls_welcome')
+        .order('created_at')
+        .limit(1)
+        .maybeSingle();
+
+    if (welcomeRow != null) {
       await ensureMlsSessionAsResponder(conversationId: conversationId);
       return;
     }
 
+    // Няма Welcome → ние сме initiator (дори ако crypto_version вече е mls)
     await ensureMlsSessionAsInitiator(
       conversationId: conversationId,
       otherUserId: otherUserId,

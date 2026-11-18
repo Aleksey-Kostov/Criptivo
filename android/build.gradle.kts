@@ -20,19 +20,26 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Force compileSdk 36 for plugins still on 34 (file_picker, lifecycle, etc.)
+// Force compileSdk 36 for plugins still on 34 (file_picker, etc.)
+// Do NOT use afterEvaluate here — conflicts with evaluationDependsOn(":app").
 subprojects {
-    afterEvaluate {
+    fun configureCompileSdk36() {
         extensions.findByName("android")?.let { androidExt ->
             try {
-                val setCompileSdk = androidExt.javaClass.methods.find {
-                    it.name == "setCompileSdk" && it.parameterCount == 1
-                }
-                setCompileSdk?.invoke(androidExt, 36)
+                androidExt.javaClass.methods
+                    .find { it.name == "setCompileSdk" && it.parameterCount == 1 }
+                    ?.invoke(androidExt, 36)
             } catch (_: Exception) {
-                // ignore modules without mutable compileSdk
+                // ignore
             }
         }
+    }
+
+    pluginManager.withPlugin("com.android.library") {
+        configureCompileSdk36()
+    }
+    pluginManager.withPlugin("com.android.application") {
+        configureCompileSdk36()
     }
 }
 

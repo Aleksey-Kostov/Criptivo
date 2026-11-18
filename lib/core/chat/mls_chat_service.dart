@@ -15,6 +15,16 @@ class MlsChatService {
 
   String? get _myId => AuthService.currentUser?.id;
 
+  /// Увери се, че MLS identity е заредена в Rust runtime.
+  Future<void> _ensureIdentityLoaded() async {
+    if (MlsService.instance.isIdentityLoaded) return;
+
+    final loaded = await MlsService.instance.loadIdentityFromStorage();
+    if (loaded == null) {
+      throw StateError('MLS identity не е заредена. Влез отново в акаунта.');
+    }
+  }
+
   /// Alice: claim KP → createDm → запис welcome като системно съобщение.
   Future<void> ensureMlsSessionAsInitiator({
     required String conversationId,
@@ -25,6 +35,8 @@ class MlsChatService {
       await MlsService.instance.ensureGroupLoaded(conversationId);
       return;
     }
+
+    await _ensureIdentityLoaded();
 
     final kp = await MlsKeyPackageService.instance.claimKeyPackage(otherUserId);
     if (kp == null) {
@@ -76,6 +88,8 @@ class MlsChatService {
       await MlsService.instance.ensureGroupLoaded(conversationId);
       return;
     }
+
+    await _ensureIdentityLoaded();
 
     final welcomeRow = await _db
         .from('messages')
@@ -134,11 +148,11 @@ class MlsChatService {
 
     final localState = await MlsSecureStorage.loadGroupState(conversationId);
     if (localState != null && localState.isNotEmpty) {
+      await _ensureIdentityLoaded();
       await MlsService.instance.ensureGroupLoaded(conversationId);
       return;
     }
 
-    // Има ли вече Welcome в DB?
     final welcomeRow = await _db
         .from('messages')
         .select('id')
@@ -153,7 +167,6 @@ class MlsChatService {
       return;
     }
 
-    // Няма Welcome → ние сме initiator (дори ако crypto_version вече е mls)
     await ensureMlsSessionAsInitiator(
       conversationId: conversationId,
       otherUserId: otherUserId,
@@ -167,6 +180,7 @@ class MlsChatService {
     final myId = _myId;
     if (myId == null) throw StateError('Не си влязъл.');
 
+    await _ensureIdentityLoaded();
     await MlsService.instance.ensureGroupLoaded(conversationId);
     final enc = await MlsService.instance.encrypt(
       conversationId: conversationId,
@@ -214,6 +228,8 @@ class MlsChatService {
     final conversationId = row['conversation_id'] as String?;
     final cid = conversationId ?? row['_conversation_id'] as String?;
     if (cid == null) return null;
+
+    await _ensureIdentityLoaded();
 
     final result = await MlsService.instance.process(
       conversationId: cid,

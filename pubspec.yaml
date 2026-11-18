@@ -40,11 +40,12 @@ dependencies:
   record: ^6.2.1
   path_provider: ^2.1.5
   permission_handler: ^11.3.1
-  flutter_webrtc: ^0.12.12
+  flutter_webrtc: ^0.12.12+hotfix.1
 
   # Open / share
   open_filex: ^4.5.0
   share_plus: ^10.1.4
+
   rust_lib_criptivo:
     path: rust_builder
   flutter_rust_bridge: 2.13.0
@@ -77,3 +78,4 @@ flutter:
     - family: NotoSansGlagolitic
       fonts:
         - asset: assets/fonts/NotoSansGlagolitic-Regular.ttf
+        

@@ -16,30 +16,21 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
+// Force compileSdk 36 on every Android library/app plugin module
+// (file_picker, flutter_webrtc, etc.)
 subprojects {
-    project.evaluationDependsOn(":app")
-}
-
-// Force compileSdk 36 for plugins still on 34 (file_picker, etc.)
-// Do NOT use afterEvaluate here — conflicts with evaluationDependsOn(":app").
-subprojects {
-    fun configureCompileSdk36() {
-        extensions.findByName("android")?.let { androidExt ->
-            try {
-                androidExt.javaClass.methods
-                    .find { it.name == "setCompileSdk" && it.parameterCount == 1 }
-                    ?.invoke(androidExt, 36)
-            } catch (_: Exception) {
-                // ignore
-            }
+    afterEvaluate {
+        val androidExt = extensions.findByName("android") ?: return@afterEvaluate
+        try {
+            androidExt.javaClass.methods
+                .find { it.name == "setCompileSdk" && it.parameterCount == 1 }
+                ?.invoke(androidExt, 36)
+            androidExt.javaClass.methods
+                .find { it.name == "setCompileSdkVersion" && it.parameterCount == 1 }
+                ?.invoke(androidExt, 36)
+        } catch (_: Exception) {
+            // ignore
         }
-    }
-
-    pluginManager.withPlugin("com.android.library") {
-        configureCompileSdk36()
-    }
-    pluginManager.withPlugin("com.android.application") {
-        configureCompileSdk36()
     }
 }
 

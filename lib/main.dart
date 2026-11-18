@@ -11,25 +11,20 @@ import 'src/rust/frb_generated.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await RustLib.init();
+  // Rust/MLS: не блокирай целия UI ако native lib fail-не на Android
+  try {
+    await RustLib.init();
+    debugPrint('Criptivo: RustLib.init OK');
+  } catch (e, st) {
+    debugPrint('Criptivo: RustLib.init FAILED: $e');
+    debugPrintStack(stackTrace: st);
+    // App-ът пак тръгва; MLS няма да работи докато не се оправи native.
+  }
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.anonKey,
   );
-
-  // ВАЖНО:
-  // Не генерираме криптографични ключове при стартиране.
-  //
-  // При съществуващ акаунт липсващите локални ключове трябва
-  // да бъдат възстановени или създадени чрез изрично действие,
-  // а не автоматично при отваряне на приложението.
-  //
-  // Новата идентичност се създава в регистрационния поток.
-  // Не променяме публичния ключ в Supabase при стартиране.
-  //
-  // MLS identity се зарежда след login (loadIdentityFromStorage),
-  // не тук при студено стартиране без сесия.
 
   await ChatBackgroundStyle.load();
 
@@ -39,8 +34,6 @@ Future<void> main() async {
 class CriptivoApp extends StatelessWidget {
   const CriptivoApp({super.key, this.home});
 
-  /// Позволява на тестовете да подадат собствен начален екран,
-  /// без да е необходимо да се инициализира Supabase.
   final Widget? home;
 
   @override

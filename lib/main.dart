@@ -12,14 +12,9 @@ import 'src/rust/frb_generated.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    debugPrint('Criptivo: RustLib.init starting...');
-    await RustLib.init().timeout(const Duration(seconds: 20));
-    debugPrint('Criptivo: RustLib.init OK');
-  } catch (e, st) {
-    debugPrint('Criptivo: RustLib.init FAILED or timeout: $e');
-    debugPrintStack(stackTrace: st);
-  }
+  debugPrint('Criptivo: RustLib.init starting...');
+  await RustLib.init();
+  debugPrint('Criptivo: RustLib.init OK');
 
   await Supabase.initialize(
     url: SupabaseConfig.url,

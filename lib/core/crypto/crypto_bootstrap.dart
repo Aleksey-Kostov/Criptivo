@@ -7,42 +7,35 @@ import 'mls_service.dart';
 class CryptoBootstrap {
   static Future<KeySyncStatus> runAfterLogin() async {
     final user = AuthService.currentUser;
+    debugPrint('Criptivo: bootstrap start, user=${user?.id}');
     if (user == null) return KeySyncStatus.error;
 
     var status = await AuthService.syncPublicKeyToProfile();
+    debugPrint('Criptivo: key sync status=$status');
 
     if (status == KeySyncStatus.mismatch ||
         status == KeySyncStatus.missingLocal ||
         status == KeySyncStatus.invalidLocal) {
       debugPrint('Criptivo: repair keys for testing (status=$status)');
       status = await AuthService.repairKeysForTesting();
+      debugPrint('Criptivo: repair result=$status');
     }
 
     if (status != KeySyncStatus.ok) {
+      debugPrint('Criptivo: bootstrap aborted, status=$status');
       return status;
     }
 
     try {
-      final existing = await MlsService.instance.loadIdentityFromStorage();
+      debugPrint('Criptivo: forcing MLS identity for ${user.id}');
+      await MlsService.instance.createIdentity(user.id);
+      debugPrint('Criptivo: MLS identity forced for ${user.id}');
 
-      // На едно устройство след смяна на акаунт не ползваме чужда MLS identity.
-      if (existing == null || existing.identity != user.id) {
-        if (existing != null) {
-          debugPrint(
-            'Criptivo: MLS identity mismatch '
-            '(stored=${existing.identity}, user=${user.id}) — recreating',
-          );
-        }
-        await MlsService.instance.createIdentity(user.id);
-        debugPrint('Criptivo: MLS identity created for ${user.id}');
-      } else {
-        debugPrint('Criptivo: MLS identity loaded: ${existing.identity}');
-      }
-
-      // C3: поддържай pool от KeyPackages в Supabase
       await MlsKeyPackageService.instance.ensurePool();
-    } catch (e) {
-      debugPrint('Criptivo: MLS bootstrap failed: $e');
+      debugPrint('Criptivo: ensurePool finished');
+    } catch (e, st) {
+      debugPrint('Criptivo: MLS bootstrap FAILED: $e');
+      debugPrintStack(stackTrace: st);
     }
 
     return status;

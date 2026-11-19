@@ -22,7 +22,6 @@ class MlsKeyPackageService {
         .map((kp) => {'user_id': user.id, 'key_package_b64': kp})
         .toList();
 
-    // batch insert
     await _db.from('mls_key_packages').insert(rows);
     return rows.length;
   }
@@ -58,16 +57,29 @@ class MlsKeyPackageService {
 
   /// Взима (claim) един KP на [otherUserId]. Null ако няма.
   Future<String?> claimKeyPackage(String otherUserId) async {
-    final rows = await _db.rpc(
+    debugPrint('Criptivo: RPC claim for otherUserId=$otherUserId');
+
+    final result = await _db.rpc(
       'claim_mls_key_package',
       params: {'target_user': otherUserId},
     );
 
-    if (rows is! List || rows.isEmpty) {
-      return null;
+    debugPrint('Criptivo: RPC raw type=${result.runtimeType} value=$result');
+
+    if (result == null) return null;
+
+    if (result is List) {
+      if (result.isEmpty) return null;
+      final row = result.first;
+      if (row is Map) {
+        return row['key_package_b64'] as String?;
+      }
     }
 
-    final row = rows.first as Map<String, dynamic>;
-    return row['key_package_b64'] as String?;
+    if (result is Map) {
+      return result['key_package_b64'] as String?;
+    }
+
+    return null;
   }
 }

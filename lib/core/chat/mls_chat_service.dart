@@ -16,12 +16,30 @@ class MlsChatService {
   String? get _myId => AuthService.currentUser?.id;
 
   /// Увери се, че MLS identity е заредена в Rust runtime.
+  /// Ако няма в storage — опитва да създаде нова.
   Future<void> _ensureIdentityLoaded() async {
     if (MlsService.instance.isIdentityLoaded) return;
 
-    final loaded = await MlsService.instance.loadIdentityFromStorage();
-    if (loaded == null) {
-      throw StateError('MLS identity не е заредена. Влез отново в акаунта.');
+    try {
+      final loaded = await MlsService.instance.loadIdentityFromStorage();
+      if (loaded != null) return;
+    } catch (e) {
+      debugPrint('Criptivo: loadIdentity failed: $e');
+    }
+
+    final user = AuthService.currentUser;
+    if (user == null) {
+      throw StateError('Не си влязъл.');
+    }
+
+    try {
+      await MlsService.instance.createIdentity(user.id);
+      debugPrint('Criptivo: identity created on demand for ${user.id}');
+    } catch (e) {
+      throw StateError(
+        'MLS identity не можа да се зареди или създаде. '
+        'Рестартирай приложението. ($e)',
+      );
     }
   }
 

@@ -1,4 +1,3 @@
-// import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -7,19 +6,11 @@ import 'core/theme/chat_background_style.dart';
 import 'core/theme/criptivo_theme.dart';
 import 'features/auth/login_page.dart';
 import 'features/home/home_page.dart';
-import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    debugPrint('Criptivo: RustLib.init starting...');
-    await RustLib.init().timeout(const Duration(seconds: 15));
-    debugPrint('Criptivo: RustLib.init OK');
-  } catch (e, st) {
-    debugPrint('Criptivo: RustLib.init FAILED: $e');
-    debugPrintStack(stackTrace: st);
-  }
+  debugPrint('Criptivo: RustLib.init SKIPPED for test');
 
   await Supabase.initialize(
     url: SupabaseConfig.url,

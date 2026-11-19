@@ -59,27 +59,43 @@ class MlsKeyPackageService {
   Future<String?> claimKeyPackage(String otherUserId) async {
     debugPrint('Criptivo: RPC claim for otherUserId=$otherUserId');
 
-    final result = await _db.rpc(
-      'claim_mls_key_package',
-      params: {'target_user': otherUserId},
-    );
+    try {
+      final result = await _db.rpc(
+        'claim_mls_key_package',
+        params: {'target_user': otherUserId},
+      );
 
-    debugPrint('Criptivo: RPC raw type=${result.runtimeType} value=$result');
+      debugPrint('Criptivo: RPC raw type=${result.runtimeType} value=$result');
 
-    if (result == null) return null;
+      if (result == null) return null;
 
-    if (result is List) {
-      if (result.isEmpty) return null;
-      final row = result.first;
-      if (row is Map) {
-        return row['key_package_b64'] as String?;
+      // Обработва List
+      if (result is List) {
+        if (result.isEmpty) {
+          debugPrint('Criptivo: RPC returned empty list');
+          return null;
+        }
+        final row = result.first;
+        if (row is Map) {
+          final kp = row['key_package_b64'] as String?;
+          debugPrint('Criptivo: claimed KP length=${kp?.length ?? 0}');
+          return kp;
+        }
       }
-    }
 
-    if (result is Map) {
-      return result['key_package_b64'] as String?;
-    }
+      // Обработва Map (ако RPC връща един ред директно)
+      if (result is Map) {
+        final kp = result['key_package_b64'] as String?;
+        debugPrint('Criptivo: claimed KP (map) length=${kp?.length ?? 0}');
+        return kp;
+      }
 
-    return null;
+      debugPrint('Criptivo: unexpected RPC result type');
+      return null;
+    } catch (e, st) {
+      debugPrint('Criptivo: claimKeyPackage error: $e');
+      debugPrint('Criptivo: stack: $st');
+      return null;
+    }
   }
 }

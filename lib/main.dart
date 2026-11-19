@@ -1,3 +1,4 @@
+// import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -11,14 +12,13 @@ import 'src/rust/frb_generated.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Rust/MLS: не блокирай целия UI ако native lib fail-не на Android
   try {
-    await RustLib.init();
+    debugPrint('Criptivo: RustLib.init starting...');
+    await RustLib.init().timeout(const Duration(seconds: 15));
     debugPrint('Criptivo: RustLib.init OK');
   } catch (e, st) {
     debugPrint('Criptivo: RustLib.init FAILED: $e');
     debugPrintStack(stackTrace: st);
-    // App-ът пак тръгва; MLS няма да работи докато не се оправи native.
   }
 
   await Supabase.initialize(

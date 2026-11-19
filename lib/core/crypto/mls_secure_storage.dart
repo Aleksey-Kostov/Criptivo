@@ -1,13 +1,19 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Локално защитено хранилище за MLS state.
 /// Никога не качвай тези данни в Supabase.
+///
+/// Ключовете са per-user, за да можеш да сменяш акаунти на едно устройство.
 class MlsSecureStorage {
   MlsSecureStorage._();
 
-  static const _identityKey = 'mls_identity_state_v2';
+  static String? get _uid => Supabase.instance.client.auth.currentUser?.id;
 
-  static String _groupKey(String groupId) => 'mls_group_state_v1_$groupId';
+  static String get _identityKey => 'mls_identity_state_v2_${_uid ?? 'anon'}';
+
+  static String _groupKey(String groupId) =>
+      'mls_group_state_v1_${_uid ?? 'anon'}_$groupId';
 
   static final FlutterSecureStorage _secure = FlutterSecureStorage(
     webOptions: const WebOptions(
